@@ -73,7 +73,10 @@ pub fn browse_messages(conn: &Connection, args: &cli::MessagesArgs) -> Result<Ve
         _ => "m.message_date",
     };
     let dir = if args.reverse { "ASC" } else { "DESC" };
-    sql.push_str(&format!(" ORDER BY {order} {dir} LIMIT ?{}", params.len() + 1));
+    sql.push_str(&format!(
+        " ORDER BY {order} {dir} LIMIT ?{}",
+        params.len() + 1
+    ));
     params.push(Box::new(args.limit as i64));
 
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -95,7 +98,10 @@ pub fn browse_messages(conn: &Connection, args: &cli::MessagesArgs) -> Result<Ve
             result_type: "message".into(),
             id: row.get("id")?,
             title: row.get("title")?,
-            snippet: truncate_str(&row.get::<_, Option<String>>("snippet")?.unwrap_or_default(), 200),
+            snippet: truncate_str(
+                &row.get::<_, Option<String>>("snippet")?.unwrap_or_default(),
+                200,
+            ),
             score: 1.0,
             metadata,
         })
@@ -157,7 +163,10 @@ pub fn browse_notes(conn: &Connection, args: &cli::NotesArgs) -> Result<Vec<Sear
         _ => "n.modified_at",
     };
     let dir = if args.reverse { "ASC" } else { "DESC" };
-    sql.push_str(&format!(" ORDER BY {order} {dir} LIMIT ?{}", params.len() + 1));
+    sql.push_str(&format!(
+        " ORDER BY {order} {dir} LIMIT ?{}",
+        params.len() + 1
+    ));
     params.push(Box::new(args.limit as i64));
 
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -180,8 +189,13 @@ pub fn browse_notes(conn: &Connection, args: &cli::NotesArgs) -> Result<Vec<Sear
         Ok(SearchResult {
             result_type: "note".into(),
             id: row.get("id")?,
-            title: row.get::<_, Option<String>>("title")?.unwrap_or_else(|| "Untitled".into()),
-            snippet: truncate_str(&row.get::<_, Option<String>>("body")?.unwrap_or_default(), 200),
+            title: row
+                .get::<_, Option<String>>("title")?
+                .unwrap_or_else(|| "Untitled".into()),
+            snippet: truncate_str(
+                &row.get::<_, Option<String>>("body")?.unwrap_or_default(),
+                200,
+            ),
             score: 1.0,
             metadata,
         })
@@ -216,20 +230,19 @@ pub fn browse_contacts(conn: &Connection, args: &cli::ContactsArgs) -> Result<Ve
     }
 
     if let Some(ref org) = args.org {
-        sql.push_str(&format!(" AND LOWER(c.organization) LIKE LOWER(?{})", params.len() + 1));
+        sql.push_str(&format!(
+            " AND LOWER(c.organization) LIKE LOWER(?{})",
+            params.len() + 1
+        ));
         params.push(Box::new(format!("%{org}%")));
     }
 
     if args.has_email {
-        sql.push_str(
-            " AND c.identifier IN (SELECT contact_identifier FROM contact_emails)",
-        );
+        sql.push_str(" AND c.identifier IN (SELECT contact_identifier FROM contact_emails)");
     }
 
     if args.has_phone {
-        sql.push_str(
-            " AND c.identifier IN (SELECT contact_identifier FROM contact_phones)",
-        );
+        sql.push_str(" AND c.identifier IN (SELECT contact_identifier FROM contact_phones)");
     }
 
     let order = match args.sort.as_str() {
@@ -237,7 +250,10 @@ pub fn browse_contacts(conn: &Connection, args: &cli::ContactsArgs) -> Result<Ve
         _ => "name",
     };
     let dir = if args.reverse { "DESC" } else { "ASC" };
-    sql.push_str(&format!(" ORDER BY {order} {dir} LIMIT ?{}", params.len() + 1));
+    sql.push_str(&format!(
+        " ORDER BY {order} {dir} LIMIT ?{}",
+        params.len() + 1
+    ));
     params.push(Box::new(args.limit as i64));
 
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -286,7 +302,10 @@ pub fn browse_documents(conn: &Connection, args: &cli::DocumentsArgs) -> Result<
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
     if let Some(ref ft) = args.file_type {
-        sql.push_str(&format!(" AND LOWER(d.file_type) = LOWER(?{})", params.len() + 1));
+        sql.push_str(&format!(
+            " AND LOWER(d.file_type) = LOWER(?{})",
+            params.len() + 1
+        ));
         params.push(Box::new(format!(".{ft}")));
     }
 
@@ -314,7 +333,10 @@ pub fn browse_documents(conn: &Connection, args: &cli::DocumentsArgs) -> Result<
         _ => "d.modified_at",
     };
     let dir = if args.reverse { "ASC" } else { "DESC" };
-    sql.push_str(&format!(" ORDER BY {order} {dir} LIMIT ?{}", params.len() + 1));
+    sql.push_str(&format!(
+        " ORDER BY {order} {dir} LIMIT ?{}",
+        params.len() + 1
+    ));
     params.push(Box::new(args.limit as i64));
 
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -341,8 +363,13 @@ pub fn browse_documents(conn: &Connection, args: &cli::DocumentsArgs) -> Result<
         Ok(SearchResult {
             result_type: "document".into(),
             id: row.get("id")?,
-            title: row.get::<_, Option<String>>("title")?.unwrap_or_else(|| "Untitled".into()),
-            snippet: truncate_str(&row.get::<_, Option<String>>("content")?.unwrap_or_default(), 200),
+            title: row
+                .get::<_, Option<String>>("title")?
+                .unwrap_or_else(|| "Untitled".into()),
+            snippet: truncate_str(
+                &row.get::<_, Option<String>>("content")?.unwrap_or_default(),
+                200,
+            ),
             score: 1.0,
             metadata,
         })
@@ -378,7 +405,10 @@ pub fn browse_reminders(conn: &Connection, args: &cli::RemindersArgs) -> Result<
     }
 
     if let Some(ref list) = args.list {
-        sql.push_str(&format!(" AND LOWER(r.list_name) LIKE LOWER(?{})", params.len() + 1));
+        sql.push_str(&format!(
+            " AND LOWER(r.list_name) LIKE LOWER(?{})",
+            params.len() + 1
+        ));
         params.push(Box::new(format!("%{list}%")));
     }
 
@@ -414,7 +444,10 @@ pub fn browse_reminders(conn: &Connection, args: &cli::RemindersArgs) -> Result<
         _ => "COALESCE(r.due_date, '9999-12-31')",
     };
     let dir = if args.reverse { "DESC" } else { "ASC" };
-    sql.push_str(&format!(" ORDER BY {order} {dir} LIMIT ?{}", params.len() + 1));
+    sql.push_str(&format!(
+        " ORDER BY {order} {dir} LIMIT ?{}",
+        params.len() + 1
+    ));
     params.push(Box::new(args.limit as i64));
 
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -445,8 +478,13 @@ pub fn browse_reminders(conn: &Connection, args: &cli::RemindersArgs) -> Result<
         Ok(SearchResult {
             result_type: "reminder".into(),
             id: row.get("id")?,
-            title: row.get::<_, Option<String>>("title")?.unwrap_or_else(|| "Untitled".into()),
-            snippet: truncate_str(&row.get::<_, Option<String>>("notes")?.unwrap_or_default(), 200),
+            title: row
+                .get::<_, Option<String>>("title")?
+                .unwrap_or_else(|| "Untitled".into()),
+            snippet: truncate_str(
+                &row.get::<_, Option<String>>("notes")?.unwrap_or_default(),
+                200,
+            ),
             score: 1.0,
             metadata,
         })
@@ -500,7 +538,10 @@ pub fn browse_photos(conn: &Connection, args: &cli::PhotosArgs) -> Result<Vec<Se
         _ => "a.date_created",
     };
     let dir = if args.reverse { "ASC" } else { "DESC" };
-    sql.push_str(&format!(" ORDER BY {order} {dir} LIMIT ?{}", params.len() + 1));
+    sql.push_str(&format!(
+        " ORDER BY {order} {dir} LIMIT ?{}",
+        params.len() + 1
+    ));
     params.push(Box::new(args.limit as i64));
 
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -523,8 +564,12 @@ pub fn browse_photos(conn: &Connection, args: &cli::PhotosArgs) -> Result<Vec<Se
         Ok(SearchResult {
             result_type: "photo".into(),
             id: row.get("id")?,
-            title: row.get::<_, Option<String>>("title")?.unwrap_or_else(|| "Untitled".into()),
-            snippet: row.get::<_, Option<String>>("filename")?.unwrap_or_default(),
+            title: row
+                .get::<_, Option<String>>("title")?
+                .unwrap_or_else(|| "Untitled".into()),
+            snippet: row
+                .get::<_, Option<String>>("filename")?
+                .unwrap_or_default(),
             score: 1.0,
             metadata,
         })
@@ -533,7 +578,11 @@ pub fn browse_photos(conn: &Connection, args: &cli::PhotosArgs) -> Result<Vec<Se
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-fn photos_with_person(conn: &Connection, name: &str, args: &cli::PhotosArgs) -> Result<Vec<SearchResult>> {
+fn photos_with_person(
+    conn: &Connection,
+    name: &str,
+    args: &cli::PhotosArgs,
+) -> Result<Vec<SearchResult>> {
     let mut sql = String::from(
         "SELECT
             CAST(a.asset_id AS TEXT) as id,
@@ -559,7 +608,10 @@ fn photos_with_person(conn: &Connection, name: &str, args: &cli::PhotosArgs) -> 
         params.push(Box::new(to.clone()));
     }
 
-    sql.push_str(&format!(" ORDER BY a.date_created DESC LIMIT ?{}", params.len() + 1));
+    sql.push_str(&format!(
+        " ORDER BY a.date_created DESC LIMIT ?{}",
+        params.len() + 1
+    ));
     params.push(Box::new(args.limit as i64));
 
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
@@ -583,7 +635,9 @@ fn photos_with_person(conn: &Connection, name: &str, args: &cli::PhotosArgs) -> 
         Ok(SearchResult {
             result_type: "photo".into(),
             id: row.get("id")?,
-            title: row.get::<_, Option<String>>("title")?.unwrap_or_else(|| "Untitled".into()),
+            title: row
+                .get::<_, Option<String>>("title")?
+                .unwrap_or_else(|| "Untitled".into()),
             snippet: format!("Photo with {full_name}"),
             score: 1.0,
             metadata,
@@ -604,11 +658,21 @@ fn haversine_km(lat1: f64, lng1: f64, lat2: f64, lng2: f64) -> f64 {
     r * c
 }
 
-fn photos_near_location(conn: &Connection, lat: f64, lng: f64, radius_km: f64, limit: usize) -> Result<Vec<SearchResult>> {
+fn photos_near_location(
+    conn: &Connection,
+    lat: f64,
+    lng: f64,
+    radius_km: f64,
+    limit: usize,
+) -> Result<Vec<SearchResult>> {
     // Use bounding box for initial SQL filter, then refine with Haversine
     let lat_delta = radius_km / 111.0;
     let cos_lat = (lat * std::f64::consts::PI / 180.0).cos().abs();
-    let lng_delta = if cos_lat > 0.001 { radius_km / (111.0 * cos_lat) } else { radius_km / 111.0 };
+    let lng_delta = if cos_lat > 0.001 {
+        radius_km / (111.0 * cos_lat)
+    } else {
+        radius_km / 111.0
+    };
 
     let mut stmt = conn.prepare(
         "SELECT
@@ -637,9 +701,14 @@ fn photos_near_location(conn: &Connection, lat: f64, lng: f64, radius_km: f64, l
             let plng: f64 = row.get("longitude")?;
             let date: Option<String> = row.get("date_created")?;
             let filename: Option<String> = row.get("filename")?;
-            Ok((row.get::<_, String>("id")?,
+            Ok((
+                row.get::<_, String>("id")?,
                 row.get::<_, Option<String>>("title")?,
-                filename, date, plat, plng))
+                filename,
+                date,
+                plat,
+                plng,
+            ))
         },
     )?;
 
@@ -657,7 +726,10 @@ fn photos_near_location(conn: &Connection, lat: f64, lng: f64, radius_km: f64, l
             }
             metadata.insert("lat".into(), serde_json::json!(plat));
             metadata.insert("lng".into(), serde_json::json!(plng));
-            metadata.insert("distance_km".into(), serde_json::json!((distance * 100.0).round() / 100.0));
+            metadata.insert(
+                "distance_km".into(),
+                serde_json::json!((distance * 100.0).round() / 100.0),
+            );
             Some(SearchResult {
                 result_type: "photo".into(),
                 id,
@@ -671,8 +743,16 @@ fn photos_near_location(conn: &Connection, lat: f64, lng: f64, radius_km: f64, l
 
     // Sort by distance (ascending) instead of date
     results.sort_by(|a, b| {
-        let da = a.metadata.get("distance_km").and_then(|v| v.as_f64()).unwrap_or(f64::MAX);
-        let db = b.metadata.get("distance_km").and_then(|v| v.as_f64()).unwrap_or(f64::MAX);
+        let da = a
+            .metadata
+            .get("distance_km")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(f64::MAX);
+        let db = b
+            .metadata
+            .get("distance_km")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(f64::MAX);
         da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
     });
     results.truncate(limit);
@@ -703,28 +783,32 @@ pub fn person_view(conn: &Connection, name: &str, limit: usize) -> Result<serde_
         LIMIT 1",
     ) {
         let pattern = format!("%{name}%");
-        if let Ok(Some(row)) = stmt.query_row([&pattern], |row| {
-            let id: String = row.get("identifier")?;
-            let full_name: String = row.get("full_name")?;
-            let org: Option<String> = row.get("organization")?;
-            let job: Option<String> = row.get("job_title")?;
-            let note: Option<String> = row.get("note")?;
-            let birthday: Option<String> = row.get("birthday")?;
-            Ok(serde_json::json!({
-                "id": id,
-                "name": full_name.trim(),
-                "organization": org,
-                "job_title": job,
-                "note": note,
-                "birthday": birthday,
-            }))
-        }).map(Some).or_else(|e| {
-            if matches!(e, rusqlite::Error::QueryReturnedNoRows) {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        }) {
+        if let Ok(Some(row)) = stmt
+            .query_row([&pattern], |row| {
+                let id: String = row.get("identifier")?;
+                let full_name: String = row.get("full_name")?;
+                let org: Option<String> = row.get("organization")?;
+                let job: Option<String> = row.get("job_title")?;
+                let note: Option<String> = row.get("note")?;
+                let birthday: Option<String> = row.get("birthday")?;
+                Ok(serde_json::json!({
+                    "id": id,
+                    "name": full_name.trim(),
+                    "organization": org,
+                    "job_title": job,
+                    "note": note,
+                    "birthday": birthday,
+                }))
+            })
+            .map(Some)
+            .or_else(|e| {
+                if matches!(e, rusqlite::Error::QueryReturnedNoRows) {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+        {
             result["contact"] = row;
         }
     }
@@ -902,8 +986,14 @@ pub fn recent_activity(conn: &Connection, limit: usize) -> Result<serde_json::Va
 
     // Recent messages
     let msg_args = cli::MessagesArgs {
-        contact: None, date_from: None, date_to: None, from_me: false,
-        search: None, sort: "date".into(), reverse: false, limit,
+        contact: None,
+        date_from: None,
+        date_to: None,
+        from_me: false,
+        search: None,
+        sort: "date".into(),
+        reverse: false,
+        limit,
         format: "text".into(),
     };
     if let Ok(msgs) = browse_messages(conn, &msg_args) {
@@ -912,8 +1002,15 @@ pub fn recent_activity(conn: &Connection, limit: usize) -> Result<serde_json::Va
 
     // Recent notes
     let note_args = cli::NotesArgs {
-        vault: None, tag: None, search: None, date_from: None, date_to: None,
-        sort: "modified".into(), reverse: false, limit, format: "text".into(),
+        vault: None,
+        tag: None,
+        search: None,
+        date_from: None,
+        date_to: None,
+        sort: "modified".into(),
+        reverse: false,
+        limit,
+        format: "text".into(),
     };
     if let Ok(notes) = browse_notes(conn, &note_args) {
         result["notes"] = serde_json::json!(notes);
@@ -921,8 +1018,15 @@ pub fn recent_activity(conn: &Connection, limit: usize) -> Result<serde_json::Va
 
     // Recent photos
     let photo_args = cli::PhotosArgs {
-        name: None, near: None, radius: 10.0, date_from: None, date_to: None,
-        sort: "date".into(), reverse: false, limit, format: "text".into(),
+        name: None,
+        near: None,
+        radius: 10.0,
+        date_from: None,
+        date_to: None,
+        sort: "date".into(),
+        reverse: false,
+        limit,
+        format: "text".into(),
     };
     if let Ok(photos) = browse_photos(conn, &photo_args) {
         result["photos"] = serde_json::json!(photos);
@@ -930,8 +1034,14 @@ pub fn recent_activity(conn: &Connection, limit: usize) -> Result<serde_json::Va
 
     // Recent documents
     let doc_args = cli::DocumentsArgs {
-        file_type: None, search: None, date_from: None, date_to: None,
-        sort: "modified".into(), reverse: false, limit, format: "text".into(),
+        file_type: None,
+        search: None,
+        date_from: None,
+        date_to: None,
+        sort: "modified".into(),
+        reverse: false,
+        limit,
+        format: "text".into(),
     };
     if let Ok(docs) = browse_documents(conn, &doc_args) {
         result["documents"] = serde_json::json!(docs);
@@ -957,7 +1067,10 @@ pub fn recent_activity(conn: &Connection, limit: usize) -> Result<serde_json::Va
                 result_type: "reminder".into(),
                 id: row.get("id")?,
                 title: row.get::<_, Option<String>>("title")?.unwrap_or_default(),
-                snippet: truncate_str(&row.get::<_, Option<String>>("notes")?.unwrap_or_default(), 150),
+                snippet: truncate_str(
+                    &row.get::<_, Option<String>>("notes")?.unwrap_or_default(),
+                    150,
+                ),
                 score: 1.0,
                 metadata,
             })
@@ -987,7 +1100,10 @@ pub fn recent_activity(conn: &Connection, limit: usize) -> Result<serde_json::Va
                 result_type: "reminder".into(),
                 id: row.get("id")?,
                 title: row.get::<_, Option<String>>("title")?.unwrap_or_default(),
-                snippet: truncate_str(&row.get::<_, Option<String>>("notes")?.unwrap_or_default(), 150),
+                snippet: truncate_str(
+                    &row.get::<_, Option<String>>("notes")?.unwrap_or_default(),
+                    150,
+                ),
                 score: 1.0,
                 metadata,
             })
@@ -1034,25 +1150,28 @@ pub fn message_context(
         LIMIT ?3",
     )?;
 
-    let before_rows = stmt.query_map(rusqlite::params![chat_id, &ref_date, before as i64], |row| {
-        let date: Option<String> = row.get("message_date")?;
-        let from_me: Option<bool> = row.get("is_from_me")?;
-        let mut metadata = HashMap::new();
-        if let Some(d) = date {
-            metadata.insert("date".into(), serde_json::Value::String(d));
-        }
-        if let Some(fm) = from_me {
-            metadata.insert("from_me".into(), serde_json::json!(fm));
-        }
-        Ok(SearchResult {
-            result_type: "message".into(),
-            id: row.get("id")?,
-            title: row.get("sender")?,
-            snippet: row.get::<_, Option<String>>("text")?.unwrap_or_default(),
-            score: 0.5,
-            metadata,
-        })
-    })?;
+    let before_rows = stmt.query_map(
+        rusqlite::params![chat_id, &ref_date, before as i64],
+        |row| {
+            let date: Option<String> = row.get("message_date")?;
+            let from_me: Option<bool> = row.get("is_from_me")?;
+            let mut metadata = HashMap::new();
+            if let Some(d) = date {
+                metadata.insert("date".into(), serde_json::Value::String(d));
+            }
+            if let Some(fm) = from_me {
+                metadata.insert("from_me".into(), serde_json::json!(fm));
+            }
+            Ok(SearchResult {
+                result_type: "message".into(),
+                id: row.get("id")?,
+                title: row.get("sender")?,
+                snippet: row.get::<_, Option<String>>("text")?.unwrap_or_default(),
+                score: 0.5,
+                metadata,
+            })
+        },
+    )?;
 
     let mut before_vec: Vec<SearchResult> = before_rows.filter_map(|r| r.ok()).collect();
     before_vec.reverse();
@@ -1238,7 +1357,9 @@ pub fn print_results(results: &[SearchResult], format: &str, _limit: usize) {
                 if !r.snippet.is_empty() {
                     println!("{}", r.snippet);
                 }
-                let meta: Vec<String> = r.metadata.iter()
+                let meta: Vec<String> = r
+                    .metadata
+                    .iter()
                     .filter(|(_, v)| !v.is_null())
                     .map(|(k, v)| {
                         let val = match v {
@@ -1266,11 +1387,21 @@ pub fn print_results(results: &[SearchResult], format: &str, _limit: usize) {
                     println!("{}", r.snippet);
                 }
                 let mut meta_parts = Vec::new();
-                for key in &["date", "modified", "due", "path", "org", "list", "file_type", "sender"] {
+                for key in &[
+                    "date",
+                    "modified",
+                    "due",
+                    "path",
+                    "org",
+                    "list",
+                    "file_type",
+                    "sender",
+                ] {
                     if let Some(val) = r.metadata.get(*key) {
                         if let Some(s) = val.as_str() {
                             if !s.is_empty() {
-                                meta_parts.push(format!("{}: {s}", key[..1].to_uppercase() + &key[1..]));
+                                meta_parts
+                                    .push(format!("{}: {s}", key[..1].to_uppercase() + &key[1..]));
                             }
                         }
                     }
@@ -1311,7 +1442,10 @@ pub fn print_person_text(data: &serde_json::Value) {
 pub fn print_timeline_text(data: &serde_json::Value) {
     if let Some(date) = data.get("date").and_then(|v| v.as_str()) {
         let days = data.get("days").and_then(|v| v.as_i64()).unwrap_or(1);
-        println!("=== Timeline: {date} ({days} day{}) ===", if days > 1 { "s" } else { "" });
+        println!(
+            "=== Timeline: {date} ({days} day{}) ===",
+            if days > 1 { "s" } else { "" }
+        );
         println!();
     }
 
@@ -1336,8 +1470,12 @@ pub fn print_recent_text(data: &serde_json::Value) {
             if !arr.is_empty() {
                 println!("--- Upcoming Reminders ---");
                 for item in arr {
-                    let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("Untitled");
-                    let due = item.get("metadata")
+                    let title = item
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Untitled");
+                    let due = item
+                        .get("metadata")
                         .and_then(|m| m.get("due"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
@@ -1353,8 +1491,12 @@ pub fn print_recent_text(data: &serde_json::Value) {
             if !arr.is_empty() {
                 println!("--- Overdue Reminders ---");
                 for item in arr {
-                    let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("Untitled");
-                    let due = item.get("metadata")
+                    let title = item
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Untitled");
+                    let due = item
+                        .get("metadata")
                         .and_then(|m| m.get("due"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
@@ -1371,7 +1513,10 @@ fn print_section(label: &str, data: Option<&serde_json::Value>) {
         if !arr.is_empty() {
             println!("--- {label} ---");
             for item in arr {
-                let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("Untitled");
+                let title = item
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Untitled");
                 let snippet = item.get("snippet").and_then(|v| v.as_str()).unwrap_or("");
                 let display: String = snippet.chars().take(100).collect();
                 println!("  {title}");
@@ -1426,7 +1571,10 @@ mod tests {
         // Sydney (-33.8688, 151.2093) to Melbourne (-37.8136, 144.9631)
         // Known distance ~714 km
         let distance = haversine_km(-33.8688, 151.2093, -37.8136, 144.9631);
-        assert!((distance - 714.0).abs() < 20.0, "Expected ~714km, got {distance}");
+        assert!(
+            (distance - 714.0).abs() < 20.0,
+            "Expected ~714km, got {distance}"
+        );
     }
 
     #[test]
@@ -1439,6 +1587,9 @@ mod tests {
     fn haversine_equator_one_degree() {
         // One degree of longitude at equator ~111 km
         let distance = haversine_km(0.0, 0.0, 0.0, 1.0);
-        assert!((distance - 111.0).abs() < 1.0, "Expected ~111km, got {distance}");
+        assert!(
+            (distance - 111.0).abs() < 1.0,
+            "Expected ~111km, got {distance}"
+        );
     }
 }

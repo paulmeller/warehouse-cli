@@ -287,7 +287,8 @@ mod tests {
                 identifier TEXT PRIMARY KEY, given_name TEXT, family_name TEXT,
                 organization TEXT, job_title TEXT, note TEXT, birthday TEXT, nickname TEXT
             );",
-        ).unwrap();
+        )
+        .unwrap();
 
         let counts = rebuild_all_fts(&conn).unwrap();
         let notes_count = counts.iter().find(|(k, _)| k == "notes").unwrap().1;
@@ -347,4 +348,3 @@ mod tests {
         assert_eq!(rem_count, 2);
     }
 }
-

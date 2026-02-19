@@ -27,10 +27,7 @@ pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {
         let src = match Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!(
-                    "  Warning: Cannot open {}: {e}",
-                    db_path.display()
-                );
+                eprintln!("  Warning: Cannot open {}: {e}", db_path.display());
                 continue;
             }
         };
@@ -121,9 +118,8 @@ fn extract_lists(src: &Connection, dst: &Connection) -> Result<usize> {
     );
 
     let mut stmt = src.prepare(&sql)?;
-    let mut insert = dst.prepare(
-        "INSERT OR REPLACE INTO reminder_lists (calendar_id, name) VALUES (?1, ?2)",
-    )?;
+    let mut insert =
+        dst.prepare("INSERT OR REPLACE INTO reminder_lists (calendar_id, name) VALUES (?1, ?2)")?;
 
     let mut count = 0;
     let rows = stmt.query_map([], |row| {

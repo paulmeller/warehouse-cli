@@ -3,7 +3,10 @@ use clap::{Parser, Subcommand};
 use crate::config;
 
 #[derive(Parser)]
-#[command(name = "warehouse", about = "Personal data warehouse - search & browse")]
+#[command(
+    name = "warehouse",
+    about = "Personal data warehouse - search & browse"
+)]
 #[command(after_help = "Quick examples:\n  \
     warehouse search \"meeting notes\"\n  \
     warehouse reminders\n  \
@@ -94,6 +97,13 @@ pub enum Commands {
 
     /// First-time setup (sync + index)
     Setup,
+
+    /// Manage data source permissions
+    #[command(subcommand)]
+    Permissions(PermissionsSubcommand),
+
+    /// View audit trail of data access
+    Audit(AuditArgs),
 }
 
 #[derive(Subcommand)]
@@ -467,4 +477,59 @@ pub struct ScheduleLogsArgs {
     /// Number of log lines to show
     #[arg(short = 'n', long, default_value_t = 50)]
     pub lines: usize,
+}
+
+#[derive(Subcommand)]
+pub enum PermissionsSubcommand {
+    /// Show current permissions
+    Show,
+    /// Enable a data source
+    Enable(PermissionsSourceArgs),
+    /// Disable a data source
+    Disable(PermissionsSourceArgs),
+    /// Set field or time permissions for a source
+    Set(PermissionsSetArgs),
+    /// Reset all permissions to deny-all
+    Reset,
+    /// Run interactive permission setup
+    Setup,
+}
+
+#[derive(Parser)]
+pub struct PermissionsSourceArgs {
+    /// Data source name (messages, contacts, notes, documents, reminders, photos)
+    pub source: String,
+}
+
+#[derive(Parser)]
+pub struct PermissionsSetArgs {
+    /// Data source name
+    pub source: String,
+
+    /// Fields to allow (comma-separated, or 'all')
+    #[arg(long)]
+    pub fields: Option<String>,
+
+    /// Maximum age in days (or 'none' to remove limit)
+    #[arg(long)]
+    pub max_age: Option<String>,
+}
+
+#[derive(Parser)]
+pub struct AuditArgs {
+    /// Show summary for the past week
+    #[arg(long)]
+    pub week: bool,
+
+    /// Number of days to show (default: 7)
+    #[arg(long)]
+    pub days: Option<u32>,
+
+    /// Filter by data source
+    #[arg(long)]
+    pub source: Option<String>,
+
+    /// Show only blocked queries
+    #[arg(long)]
+    pub blocked: bool,
 }

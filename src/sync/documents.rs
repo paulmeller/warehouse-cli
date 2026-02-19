@@ -1,10 +1,10 @@
 use anyhow::Result;
+use regex::Regex;
 use rusqlite::{params, Connection};
 use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
 use walkdir::WalkDir;
-use regex::Regex;
 
 use crate::config::{self, Config};
 
@@ -94,29 +94,21 @@ pub fn extract(conn: &Connection, config: &Config) -> Result<usize> {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
 
-            let title = path
-                .file_stem()
-                .map(|n| n.to_string_lossy().to_string());
+            let title = path.file_stem().map(|n| n.to_string_lossy().to_string());
 
             let content = extract_text_content(path, &ext);
 
-            let modified_at = metadata
-                .modified()
-                .ok()
-                .map(|t| {
-                    chrono::DateTime::<chrono::Utc>::from(t)
-                        .format("%Y-%m-%dT%H:%M:%S")
-                        .to_string()
-                });
+            let modified_at = metadata.modified().ok().map(|t| {
+                chrono::DateTime::<chrono::Utc>::from(t)
+                    .format("%Y-%m-%dT%H:%M:%S")
+                    .to_string()
+            });
 
-            let created_at = metadata
-                .created()
-                .ok()
-                .map(|t| {
-                    chrono::DateTime::<chrono::Utc>::from(t)
-                        .format("%Y-%m-%dT%H:%M:%S")
-                        .to_string()
-                });
+            let created_at = metadata.created().ok().map(|t| {
+                chrono::DateTime::<chrono::Utc>::from(t)
+                    .format("%Y-%m-%dT%H:%M:%S")
+                    .to_string()
+            });
 
             let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
 
@@ -218,7 +210,9 @@ fn compute_file_hash(path: &Path) -> Option<String> {
 fn extract_text_content(path: &Path, ext: &str) -> Option<String> {
     let result = match ext {
         ".txt" => std::fs::read_to_string(path).ok(),
-        ".html" | ".htm" => std::fs::read_to_string(path).ok().map(|c| strip_html_tags(&c)),
+        ".html" | ".htm" => std::fs::read_to_string(path)
+            .ok()
+            .map(|c| strip_html_tags(&c)),
         ".rtf" => std::fs::read_to_string(path).ok().map(|c| strip_rtf(&c)),
         ".pdf" => extract_pdf(path),
         ".docx" | ".doc" => extract_docx(path),
@@ -286,7 +280,7 @@ fn extract_pptx(path: &Path) -> Option<String> {
 
 /// Extract text from XLSX using calamine.
 fn extract_xlsx(path: &Path) -> Option<String> {
-    use calamine::{Reader, open_workbook_auto};
+    use calamine::{open_workbook_auto, Reader};
 
     let mut workbook = open_workbook_auto(path).ok()?;
     let sheet_names: Vec<String> = workbook.sheet_names().to_vec();
@@ -362,8 +356,5 @@ fn strip_rtf(rtf: &str) -> String {
         }
     }
 
-    result
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    result.split_whitespace().collect::<Vec<_>>().join(" ")
 }

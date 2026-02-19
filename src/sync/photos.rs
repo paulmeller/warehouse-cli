@@ -5,8 +5,8 @@ use crate::config::{self, Config};
 
 /// Extract Apple Photos metadata into warehouse.
 pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {
-    let photos_db_path = config::get_photos_db_path()
-        .ok_or_else(|| anyhow::anyhow!("Photos database not found"))?;
+    let photos_db_path =
+        config::get_photos_db_path().ok_or_else(|| anyhow::anyhow!("Photos database not found"))?;
 
     let src = Connection::open_with_flags(&photos_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .context("Cannot open Photos.sqlite")?;
@@ -209,9 +209,8 @@ fn extract_assets(src: &Connection, dst: &Connection) -> Result<usize> {
     for row in rows {
         let r = row?;
         insert.execute(params![
-            r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7, r.8, r.9,
-            r.10, r.11, r.12, r.13, r.14, r.15, r.16, r.17, r.18, r.19,
-            r.20, r.21, r.22, r.23
+            r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7, r.8, r.9, r.10, r.11, r.12, r.13, r.14, r.15,
+            r.16, r.17, r.18, r.19, r.20, r.21, r.22, r.23
         ])?;
         count += 1;
     }
@@ -308,7 +307,9 @@ fn extract_faces(src: &Connection, dst: &Connection) -> Result<usize> {
 
     for row in rows {
         let r = row?;
-        insert.execute(params![r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7, r.8, r.9, r.10, r.11])?;
+        insert.execute(params![
+            r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7, r.8, r.9, r.10, r.11
+        ])?;
         count += 1;
     }
     Ok(count)

@@ -89,12 +89,10 @@ fn extract_vault(conn: &Connection, vault_path: &Path, vault_name: &str) -> Resu
           word_count, char_count, created_at, modified_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     )?;
-    let mut insert_tag = conn.prepare(
-        "INSERT INTO obsidian_tags (note_id, tag) VALUES (?1, ?2)",
-    )?;
-    let mut insert_link = conn.prepare(
-        "INSERT INTO obsidian_links (source_note_id, target_title) VALUES (?1, ?2)",
-    )?;
+    let mut insert_tag =
+        conn.prepare("INSERT INTO obsidian_tags (note_id, tag) VALUES (?1, ?2)")?;
+    let mut insert_link =
+        conn.prepare("INSERT INTO obsidian_links (source_note_id, target_title) VALUES (?1, ?2)")?;
 
     let mut count = 0;
 
@@ -146,22 +144,16 @@ fn extract_vault(conn: &Connection, vault_path: &Path, vault_name: &str) -> Resu
 
         // File timestamps
         let metadata = std::fs::metadata(path).ok();
-        let created_at = metadata
-            .as_ref()
-            .and_then(|m| m.created().ok())
-            .map(|t| {
-                chrono::DateTime::<chrono::Utc>::from(t)
-                    .format("%Y-%m-%dT%H:%M:%S")
-                    .to_string()
-            });
-        let modified_at = metadata
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .map(|t| {
-                chrono::DateTime::<chrono::Utc>::from(t)
-                    .format("%Y-%m-%dT%H:%M:%S")
-                    .to_string()
-            });
+        let created_at = metadata.as_ref().and_then(|m| m.created().ok()).map(|t| {
+            chrono::DateTime::<chrono::Utc>::from(t)
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string()
+        });
+        let modified_at = metadata.as_ref().and_then(|m| m.modified().ok()).map(|t| {
+            chrono::DateTime::<chrono::Utc>::from(t)
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string()
+        });
 
         insert_note.execute(params![
             vault_name,

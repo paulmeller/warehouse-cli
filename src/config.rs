@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Config directory: ~/.warehouse/
@@ -21,6 +22,69 @@ pub struct Config {
     pub paths: PathsConfig,
     #[serde(default)]
     pub documents: DocumentsConfig,
+    #[serde(default)]
+    pub settings: SettingsConfig,
+    #[serde(default)]
+    pub permissions: HashMap<String, SourcePermission>,
+}
+
+/// Global settings for governance features.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsConfig {
+    #[serde(default = "default_true")]
+    pub audit_enabled: bool,
+    #[serde(default = "default_audit_retention")]
+    pub audit_retention_days: u32,
+}
+
+impl Default for SettingsConfig {
+    fn default() -> Self {
+        Self {
+            audit_enabled: true,
+            audit_retention_days: 90,
+        }
+    }
+}
+
+fn default_audit_retention() -> u32 {
+    90
+}
+
+/// Permission configuration for a single data source.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SourcePermission {
+    #[serde(default)]
+    pub access: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<u32>,
+}
+
+/// Load permissions from config.
+pub fn load_permissions() -> HashMap<String, SourcePermission> {
+    load_config().permissions
+}
+
+/// Load settings from config.
+pub fn load_settings() -> SettingsConfig {
+    load_config().settings
+}
+
+/// Save the full config to disk.
+pub fn save_config(config: &Config) -> anyhow::Result<()> {
+    let dir = config_dir();
+    std::fs::create_dir_all(&dir)?;
+    let path = config_file_path();
+    let toml_str = toml::to_string_pretty(config)?;
+    std::fs::write(&path, toml_str)?;
+    Ok(())
+}
+
+/// Check whether permissions have been configured.
+pub fn permissions_configured() -> bool {
+    let config = load_config();
+    !config.permissions.is_empty()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,18 +146,23 @@ impl Default for DocumentsConfig {
 }
 
 // Serde default helpers
-fn default_true() -> bool { true }
-fn default_backend() -> String { "markitdown".into() }
+fn default_true() -> bool {
+    true
+}
+fn default_backend() -> String {
+    "markitdown".into()
+}
 fn default_extensions() -> Vec<String> {
     vec![
-        ".pdf", ".docx", ".doc", ".pptx", ".ppt",
-        ".xlsx", ".xls", ".txt", ".rtf", ".html", ".htm",
+        ".pdf", ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls", ".txt", ".rtf", ".html", ".htm",
     ]
     .into_iter()
     .map(String::from)
     .collect()
 }
-fn default_max_size() -> u64 { 50 }
+fn default_max_size() -> u64 {
+    50
+}
 
 /// Load config from ~/.warehouse/config.toml, merging with defaults.
 pub fn load_config() -> Config {
@@ -216,9 +285,7 @@ pub fn discover_obsidian_vaults() -> Vec<PathBuf> {
 
     if cfg!(target_os = "macos") {
         if cfg.discovery.scan_icloud {
-            search_paths.push(
-                home.join("Library/Mobile Documents/iCloud~md~obsidian/Documents"),
-            );
+            search_paths.push(home.join("Library/Mobile Documents/iCloud~md~obsidian/Documents"));
         }
         search_paths.push(home.join("Documents"));
         if cfg.discovery.scan_dropbox {
@@ -289,8 +356,8 @@ pub fn get_photos_db_path() -> Option<PathBuf> {
     if !cfg!(target_os = "macos") {
         return None;
     }
-    let path = dirs::home_dir()?
-        .join("Pictures/Photos Library.photoslibrary/database/Photos.sqlite");
+    let path =
+        dirs::home_dir()?.join("Pictures/Photos Library.photoslibrary/database/Photos.sqlite");
     path.exists().then_some(path)
 }
 
@@ -303,20 +370,15 @@ pub fn discover_reminders_databases() -> Vec<PathBuf> {
         Some(h) => h,
         None => return Vec::new(),
     };
-    let stores_dir = home.join(
-        "Library/Group Containers/group.com.apple.reminders/Container_v1/Stores",
-    );
+    let stores_dir =
+        home.join("Library/Group Containers/group.com.apple.reminders/Container_v1/Stores");
     if !stores_dir.exists() {
         return Vec::new();
     }
     match std::fs::read_dir(&stores_dir) {
         Ok(entries) => entries
             .flatten()
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext == "sqlite")
-            })
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "sqlite"))
             .map(|e| e.path())
             .collect(),
         Err(_) => Vec::new(),
@@ -384,7 +446,11 @@ pub fn print_discovered_sources() {
     let platform = get_platform();
     let path = config_file_path();
     println!("Platform: {platform}");
-    println!("Config file: {} (exists: {})", path.display(), path.exists());
+    println!(
+        "Config file: {} (exists: {})",
+        path.display(),
+        path.exists()
+    );
     println!();
 
     println!("Obsidian Vaults:");

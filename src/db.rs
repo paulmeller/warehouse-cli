@@ -151,7 +151,14 @@ mod tests {
         let conn = in_memory_conn();
         init_search_schema(&conn).unwrap();
 
-        for table in &["messages_fts", "notes_fts", "contacts_fts", "photos_fts", "documents_fts", "reminders_fts"] {
+        for table in &[
+            "messages_fts",
+            "notes_fts",
+            "contacts_fts",
+            "photos_fts",
+            "documents_fts",
+            "reminders_fts",
+        ] {
             assert!(table_exists(&conn, table), "FTS table {table} should exist");
         }
     }
@@ -161,8 +168,18 @@ mod tests {
         let conn = in_memory_conn();
         init_search_schema(&conn).unwrap();
 
-        for table in &["messages_fts_map", "notes_fts_map", "contacts_fts_map", "photos_fts_map", "documents_fts_map", "reminders_fts_map"] {
-            assert!(table_exists(&conn, table), "Mapping table {table} should exist");
+        for table in &[
+            "messages_fts_map",
+            "notes_fts_map",
+            "contacts_fts_map",
+            "photos_fts_map",
+            "documents_fts_map",
+            "reminders_fts_map",
+        ] {
+            assert!(
+                table_exists(&conn, table),
+                "Mapping table {table} should exist"
+            );
         }
     }
 
@@ -187,7 +204,8 @@ mod tests {
     #[test]
     fn table_exists_true_for_existing() {
         let conn = in_memory_conn();
-        conn.execute_batch("CREATE TABLE test_table (id INTEGER)").unwrap();
+        conn.execute_batch("CREATE TABLE test_table (id INTEGER)")
+            .unwrap();
         assert!(table_exists(&conn, "test_table"));
     }
 
@@ -202,14 +220,16 @@ mod tests {
     #[test]
     fn table_count_empty_table() {
         let conn = in_memory_conn();
-        conn.execute_batch("CREATE TABLE items (id INTEGER)").unwrap();
+        conn.execute_batch("CREATE TABLE items (id INTEGER)")
+            .unwrap();
         assert_eq!(table_count(&conn, "items"), 0);
     }
 
     #[test]
     fn table_count_with_rows() {
         let conn = in_memory_conn();
-        conn.execute_batch("CREATE TABLE items (id INTEGER)").unwrap();
+        conn.execute_batch("CREATE TABLE items (id INTEGER)")
+            .unwrap();
         conn.execute("INSERT INTO items VALUES (1)", []).unwrap();
         conn.execute("INSERT INTO items VALUES (2)", []).unwrap();
         conn.execute("INSERT INTO items VALUES (3)", []).unwrap();

@@ -5,12 +5,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 pub const ALL_TYPES: &[&str] = &[
-    "message",
-    "note",
-    "contact",
-    "photo",
-    "document",
-    "reminder",
+    "message", "note", "contact", "photo", "document", "reminder",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -84,7 +79,11 @@ pub fn escape_fts_query(query: &str) -> String {
 }
 
 /// Perform FTS-only search across all content types.
-pub fn fts_search(conn: &Connection, query: &str, options: &SearchOptions) -> Result<Vec<SearchResult>> {
+pub fn fts_search(
+    conn: &Connection,
+    query: &str,
+    options: &SearchOptions,
+) -> Result<Vec<SearchResult>> {
     let fts_query = escape_fts_query(query);
     let mut results = Vec::new();
 
@@ -110,7 +109,11 @@ pub fn fts_search(conn: &Connection, query: &str, options: &SearchOptions) -> Re
     }
 
     // Sort by score descending
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Apply min_score filter
     results.retain(|r| r.score >= options.min_score);
@@ -130,7 +133,11 @@ pub fn fts_search(conn: &Connection, query: &str, options: &SearchOptions) -> Re
 /// from dominating results. Uses a two-pass approach:
 /// 1. Reserve min slots per type
 /// 2. Fill remaining slots with highest-scored items
-fn ensure_type_diversity(results: Vec<SearchResult>, types: &[String], limit: usize) -> Vec<SearchResult> {
+fn ensure_type_diversity(
+    results: Vec<SearchResult>,
+    types: &[String],
+    limit: usize,
+) -> Vec<SearchResult> {
     if types.len() <= 1 || results.is_empty() {
         return results;
     }
@@ -145,9 +152,10 @@ fn ensure_type_diversity(results: Vec<SearchResult>, types: &[String], limit: us
     }
 
     // Only count types that actually have results
-    let active_types: Vec<&String> = types.iter().filter(|t| {
-        by_type.get(*t).is_some_and(|v| !v.is_empty())
-    }).collect();
+    let active_types: Vec<&String> = types
+        .iter()
+        .filter(|t| by_type.get(*t).is_some_and(|v| !v.is_empty()))
+        .collect();
 
     if active_types.len() <= 1 {
         return results;
@@ -184,7 +192,11 @@ fn ensure_type_diversity(results: Vec<SearchResult>, types: &[String], limit: us
     }
 
     // Re-sort by score
-    diverse.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    diverse.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     diverse
 }
 
@@ -308,7 +320,9 @@ fn search_notes_fts(
                 Ok(SearchResult {
                     result_type: "note".into(),
                     id: row.get("id")?,
-                    title: row.get::<_, Option<String>>("title")?.unwrap_or_else(|| "Untitled".into()),
+                    title: row
+                        .get::<_, Option<String>>("title")?
+                        .unwrap_or_else(|| "Untitled".into()),
                     snippet: row.get::<_, Option<String>>("snippet")?.unwrap_or_default(),
                     score: score.abs(),
                     metadata,
@@ -425,7 +439,9 @@ fn search_photos_fts(
                 Ok(SearchResult {
                     result_type: "photo".into(),
                     id: row.get("id")?,
-                    title: row.get::<_, Option<String>>("title")?.unwrap_or_else(|| "Untitled".into()),
+                    title: row
+                        .get::<_, Option<String>>("title")?
+                        .unwrap_or_else(|| "Untitled".into()),
                     snippet: row.get::<_, Option<String>>("snippet")?.unwrap_or_default(),
                     score: score.abs(),
                     metadata,
@@ -493,7 +509,9 @@ fn search_documents_fts(
                 Ok(SearchResult {
                     result_type: "document".into(),
                     id: row.get("id")?,
-                    title: row.get::<_, Option<String>>("title")?.unwrap_or_else(|| "Untitled".into()),
+                    title: row
+                        .get::<_, Option<String>>("title")?
+                        .unwrap_or_else(|| "Untitled".into()),
                     snippet: row.get::<_, Option<String>>("snippet")?.unwrap_or_default(),
                     score: score.abs(),
                     metadata,
@@ -577,7 +595,9 @@ fn search_reminders_fts(
                 Ok(SearchResult {
                     result_type: "reminder".into(),
                     id: row.get("id")?,
-                    title: row.get::<_, Option<String>>("title")?.unwrap_or_else(|| "Untitled".into()),
+                    title: row
+                        .get::<_, Option<String>>("title")?
+                        .unwrap_or_else(|| "Untitled".into()),
                     snippet: row.get::<_, Option<String>>("snippet")?.unwrap_or_default(),
                     score: score.abs(),
                     metadata,
@@ -613,14 +633,19 @@ pub fn format_text(results: &[SearchResult]) {
         }
 
         let mut meta_parts = Vec::new();
-        for key in &["date", "modified", "due", "path", "org", "list", "file_type"] {
+        for key in &[
+            "date",
+            "modified",
+            "due",
+            "path",
+            "org",
+            "list",
+            "file_type",
+        ] {
             if let Some(val) = r.metadata.get(*key) {
                 if let Some(s) = val.as_str() {
                     if !s.is_empty() {
-                        meta_parts.push(format!(
-                            "{}: {s}",
-                            key[..1].to_uppercase() + &key[1..]
-                        ));
+                        meta_parts.push(format!("{}: {s}", key[..1].to_uppercase() + &key[1..]));
                     }
                 }
             }
@@ -665,11 +690,7 @@ pub fn format_markdown(results: &[SearchResult]) -> String {
         } else {
             (r.score * 10.0) as u32
         };
-        lines.push(format!(
-            "## [{}] {}",
-            r.result_type.to_uppercase(),
-            r.title
-        ));
+        lines.push(format!("## [{}] {}", r.result_type.to_uppercase(), r.title));
         lines.push(format!("**Score:** {score_pct}% | **ID:** {}", r.id));
         if !r.snippet.is_empty() {
             let display: String = r.snippet.chars().take(300).collect();
@@ -765,10 +786,7 @@ mod tests {
 
     #[test]
     fn diversity_single_type_passthrough() {
-        let results = vec![
-            make_result("note", "1", 0.9),
-            make_result("note", "2", 0.8),
-        ];
+        let results = vec![make_result("note", "1", 0.9), make_result("note", "2", 0.8)];
         let types = vec!["note".to_string()];
         let diverse = ensure_type_diversity(results.clone(), &types, 10);
         assert_eq!(diverse.len(), 2);
@@ -789,11 +807,18 @@ mod tests {
             results.push(make_result("note", &format!("n{i}"), 0.9 - i as f64 * 0.01));
         }
         for i in 0..3 {
-            results.push(make_result("contact", &format!("c{i}"), 0.5 - i as f64 * 0.01));
+            results.push(make_result(
+                "contact",
+                &format!("c{i}"),
+                0.5 - i as f64 * 0.01,
+            ));
         }
         let types = vec!["note".to_string(), "contact".to_string()];
         let diverse = ensure_type_diversity(results, &types, 10);
-        let contact_count = diverse.iter().filter(|r| r.result_type == "contact").count();
+        let contact_count = diverse
+            .iter()
+            .filter(|r| r.result_type == "contact")
+            .count();
         // Contacts should get at least min_per_type representation
         assert!(contact_count >= 2);
     }
@@ -831,7 +856,10 @@ mod tests {
     #[test]
     fn format_markdown_with_metadata() {
         let mut r = make_result("note", "1", 0.5);
-        r.metadata.insert("path".into(), serde_json::Value::String("/some/path".into()));
+        r.metadata.insert(
+            "path".into(),
+            serde_json::Value::String("/some/path".into()),
+        );
         let md = format_markdown(&[r]);
         assert!(md.contains("**path:** /some/path"));
     }
@@ -859,7 +887,8 @@ mod tests {
                 note_id INTEGER,
                 tag TEXT
             );",
-        ).unwrap();
+        )
+        .unwrap();
 
         conn
     }
@@ -891,7 +920,8 @@ mod tests {
                 birthday TEXT,
                 nickname TEXT
             );",
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     fn seed_contacts(conn: &Connection) {

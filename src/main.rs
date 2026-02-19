@@ -1,8 +1,11 @@
+mod audit;
 mod browse;
 mod cli;
 mod config;
 mod db;
 mod fts;
+mod governance;
+mod permissions;
 mod schedule;
 mod search;
 mod sync;
@@ -37,6 +40,8 @@ fn main() -> Result<()> {
         Commands::Schedule(sub) => cmd_schedule(sub),
         Commands::Doctor => cmd_doctor(),
         Commands::Setup => cmd_setup(&db_path),
+        Commands::Permissions(sub) => cmd_permissions(sub),
+        Commands::Audit(args) => cmd_audit(args),
     }
 }
 
@@ -66,11 +71,27 @@ fn cmd_index(db_path: &str) -> Result<()> {
 
 fn cmd_search(db_path: &str, args: cli::SearchArgs) -> Result<()> {
     let conn = db::open(db_path)?;
+
+    let requested_types: Vec<String> = if args.types.is_empty() {
+        search::ALL_TYPES.iter().map(|s| s.to_string()).collect()
+    } else {
+        args.types
+    };
+
+    // Apply governance: filter out denied sources
+    let allowed_types = governance::filter_allowed_types(&requested_types);
+    let blocked_sources: Vec<String> = requested_types
+        .iter()
+        .filter(|t| !allowed_types.contains(t))
+        .map(|t| governance::search_type_to_source(t).to_string())
+        .collect();
+
     let options = search::SearchOptions {
-        types: if args.types.is_empty() {
-            search::ALL_TYPES.iter().map(|s| s.to_string()).collect()
+        types: if allowed_types.is_empty() && !config::permissions_configured() {
+            // If no permissions configured yet, allow all (backward compat)
+            requested_types.clone()
         } else {
-            args.types
+            allowed_types.clone()
         },
         limit: args.limit,
         date_from: args.date_from,
@@ -79,6 +100,26 @@ fn cmd_search(db_path: &str, args: cli::SearchArgs) -> Result<()> {
     };
 
     let results = search::fts_search(&conn, &args.query, &options)?;
+
+    // Apply field redaction
+    let (results, redacted_fields) = if config::permissions_configured() {
+        governance::apply_field_redaction(results)
+    } else {
+        (results, std::collections::HashMap::new())
+    };
+
+    // Log to audit trail
+    let queried_sources: Vec<String> = allowed_types
+        .iter()
+        .map(|t| governance::search_type_to_source(t).to_string())
+        .collect();
+    let _ = audit::log_search(
+        &args.query,
+        &queried_sources,
+        &blocked_sources,
+        results.len(),
+        &redacted_fields,
+    );
 
     match args.format.as_str() {
         "json" => println!("{}", search::format_json(&results)?),
@@ -210,7 +251,9 @@ fn cmd_person(db_path: &str, args: cli::PersonArgs) -> Result<()> {
 fn cmd_timeline(db_path: &str, args: cli::TimelineArgs) -> Result<()> {
     let conn = db::open(db_path)?;
     let days = if args.week { 7 } else { 1 };
-    let date = args.date.unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+    let date = args
+        .date
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
     let data = browse::timeline_view(&conn, &date, days, args.limit)?;
 
     match args.format.as_str() {
@@ -231,8 +274,16 @@ fn cmd_context(db_path: &str, args: cli::ContextArgs) -> Result<()> {
     let conn = db::open(db_path)?;
     let results = browse::message_context(&conn, &args.message_id, args.before, args.after)?;
     for r in &results {
-        let marker = if r.id == args.message_id { ">>>" } else { "   " };
-        let date = r.metadata.get("date").map(|v| v.as_str().unwrap_or("")).unwrap_or("");
+        let marker = if r.id == args.message_id {
+            ">>>"
+        } else {
+            "   "
+        };
+        let date = r
+            .metadata
+            .get("date")
+            .map(|v| v.as_str().unwrap_or(""))
+            .unwrap_or("");
         println!("{marker} [{date}] {}: {}", r.title, r.snippet);
     }
     Ok(())
@@ -434,5 +485,44 @@ fn cmd_setup(db_path: &str) -> Result<()> {
     println!("  warehouse search \"your query\"");
     println!("  warehouse status");
     println!("  warehouse doctor");
+    Ok(())
+}
+
+fn cmd_permissions(sub: cli::PermissionsSubcommand) -> Result<()> {
+    match sub {
+        cli::PermissionsSubcommand::Show => {
+            governance::print_permissions_summary();
+        }
+        cli::PermissionsSubcommand::Enable(args) => {
+            permissions::enable_source(&args.source)?;
+        }
+        cli::PermissionsSubcommand::Disable(args) => {
+            permissions::disable_source(&args.source)?;
+        }
+        cli::PermissionsSubcommand::Set(args) => {
+            if let Some(ref fields) = args.fields {
+                permissions::set_fields(&args.source, fields)?;
+            }
+            if let Some(ref max_age) = args.max_age {
+                permissions::set_max_age(&args.source, max_age)?;
+            }
+            if args.fields.is_none() && args.max_age.is_none() {
+                anyhow::bail!("Specify --fields or --max-age. Example:\n  warehouse permissions set contacts --fields name,email\n  warehouse permissions set notes --max-age 90");
+            }
+        }
+        cli::PermissionsSubcommand::Reset => {
+            permissions::reset_permissions()?;
+        }
+        cli::PermissionsSubcommand::Setup => {
+            permissions::run_onboarding()?;
+        }
+    }
+    Ok(())
+}
+
+fn cmd_audit(args: cli::AuditArgs) -> Result<()> {
+    let days = if args.week { 7 } else { args.days.unwrap_or(7) };
+
+    audit::print_digest(days, args.source.as_deref(), args.blocked)?;
     Ok(())
 }

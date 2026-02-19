@@ -53,12 +53,8 @@ pub fn install_daily(time_str: &str) -> Result<()> {
     if parts.len() != 2 {
         anyhow::bail!("Invalid time format. Use HH:MM (e.g., 09:00)");
     }
-    let hour: u32 = parts[0]
-        .parse()
-        .context("Invalid hour")?;
-    let minute: u32 = parts[1]
-        .parse()
-        .context("Invalid minute")?;
+    let hour: u32 = parts[0].parse().context("Invalid hour")?;
+    let minute: u32 = parts[1].parse().context("Invalid minute")?;
 
     if hour > 23 || minute > 59 {
         anyhow::bail!("Invalid time: {time_str}");
@@ -206,7 +202,10 @@ pub fn status() -> Result<()> {
 
     if content.contains("StartCalendarInterval") {
         // Extract hour/minute
-        if let (Some(hour), Some(minute)) = (extract_plist_int(&content, "Hour"), extract_plist_int(&content, "Minute")) {
+        if let (Some(hour), Some(minute)) = (
+            extract_plist_int(&content, "Hour"),
+            extract_plist_int(&content, "Minute"),
+        ) {
             println!("Type: daily at {:02}:{:02}", hour, minute);
         }
     } else if content.contains("StartInterval") {
@@ -220,7 +219,11 @@ pub fn status() -> Result<()> {
     if log_file.exists() {
         if let Ok(log_content) = std::fs::read_to_string(&log_file) {
             let lines: Vec<&str> = log_content.lines().collect();
-            let start = if lines.len() > 10 { lines.len() - 10 } else { 0 };
+            let start = if lines.len() > 10 {
+                lines.len() - 10
+            } else {
+                0
+            };
             println!("\nRecent log:");
             for line in &lines[start..] {
                 println!("  {line}");
@@ -241,7 +244,11 @@ pub fn logs(lines: usize) -> Result<()> {
 
     let content = std::fs::read_to_string(&log_file)?;
     let all_lines: Vec<&str> = content.lines().collect();
-    let start = if all_lines.len() > lines { all_lines.len() - lines } else { 0 };
+    let start = if all_lines.len() > lines {
+        all_lines.len() - lines
+    } else {
+        0
+    };
     for line in &all_lines[start..] {
         println!("{line}");
     }
