@@ -65,3 +65,69 @@ jobs:
           files: |
             *.tar.gz
             *.sha256
+
+  update-homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download checksums
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          pattern: '*.sha256'
+
+      - name: Read checksums
+        id: checksums
+        run: |
+          echo "arm64=$(awk '{print $1}' warehouse-macos-arm64.tar.gz.sha256)" >> "$GITHUB_OUTPUT"
+          echo "x86_64=$(awk '{print $1}' warehouse-macos-x86_64.tar.gz.sha256)" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew formula
+        uses: actions/checkout@v4
+        with:
+          repository: paulmeller/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Write formula
+        run: |
+          cat > homebrew-tap/Formula/warehouse.rb << 'FORMULA'
+          class Warehouse < Formula
+            desc "Fast CLI for personal data warehouse - extraction, FTS5 search, and browsing"
+            homepage "https://github.com/paulmeller/warehouse-cli"
+            version "${{ steps.version.outputs.version }}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/paulmeller/warehouse-cli/releases/download/v${{ steps.version.outputs.version }}/warehouse-macos-arm64.tar.gz"
+                sha256 "${{ steps.checksums.outputs.arm64 }}"
+              else
+                url "https://github.com/paulmeller/warehouse-cli/releases/download/v${{ steps.version.outputs.version }}/warehouse-macos-x86_64.tar.gz"
+                sha256 "${{ steps.checksums.outputs.x86_64 }}"
+              end
+            end
+
+            def install
+              bin.install "warehouse"
+            end
+
+            test do
+              assert_match "Personal data warehouse", shell_output("#{bin}/warehouse --help")
+            end
+          end
+          FORMULA
+
+      - name: Push formula
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/warehouse.rb
+          git commit -m "Update warehouse to ${{ steps.version.outputs.version }}"
+          git push
