@@ -869,7 +869,7 @@ pub fn timeline_view(
 
     // Reminders
     let rem_args = cli::RemindersArgs {
-        all: true,
+        all: false,
         completed: false,
         list: None,
         due_today: false,
