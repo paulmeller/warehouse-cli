@@ -29,7 +29,6 @@ pub struct SearchOptions {
     pub limit: usize,
     pub date_from: Option<String>,
     pub date_to: Option<String>,
-    pub contact: Option<String>,
     pub min_score: f64,
 }
 
@@ -147,7 +146,7 @@ fn ensure_type_diversity(results: Vec<SearchResult>, types: &[String], limit: us
 
     // Only count types that actually have results
     let active_types: Vec<&String> = types.iter().filter(|t| {
-        by_type.get(*t).map_or(false, |v| !v.is_empty())
+        by_type.get(*t).is_some_and(|v| !v.is_empty())
     }).collect();
 
     if active_types.len() <= 1 {
@@ -917,7 +916,7 @@ mod tests {
             limit: 10,
             date_from: None,
             date_to: None,
-            contact: None,
+
             min_score: 0.0,
         };
         let results = fts_search(&conn, "rust", &options).unwrap();
@@ -937,7 +936,7 @@ mod tests {
             limit: 10,
             date_from: None,
             date_to: None,
-            contact: None,
+
             min_score: 0.0,
         };
         let results = fts_search(&conn, "alice", &options).unwrap();
@@ -959,7 +958,7 @@ mod tests {
             limit: 10,
             date_from: None,
             date_to: None,
-            contact: None,
+
             min_score: 0.0,
         };
         let results = fts_search(&conn, "rust", &options).unwrap();
@@ -977,7 +976,7 @@ mod tests {
             limit: 10,
             date_from: None,
             date_to: None,
-            contact: None,
+
             min_score: 0.0,
         };
         let results = fts_search(&conn, "xyznonexistent", &options).unwrap();

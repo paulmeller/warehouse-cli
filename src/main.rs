@@ -75,7 +75,6 @@ fn cmd_search(db_path: &str, args: cli::SearchArgs) -> Result<()> {
         limit: args.limit,
         date_from: args.date_from,
         date_to: args.date_to,
-        contact: args.contact,
         min_score: args.min_score,
     };
 

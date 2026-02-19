@@ -13,7 +13,7 @@ pub fn config_file_path() -> PathBuf {
     config_dir().join("config.toml")
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub discovery: DiscoveryConfig,
@@ -21,16 +21,6 @@ pub struct Config {
     pub paths: PathsConfig,
     #[serde(default)]
     pub documents: DocumentsConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            discovery: DiscoveryConfig::default(),
-            paths: PathsConfig::default(),
-            documents: DocumentsConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

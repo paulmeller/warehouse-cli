@@ -5,14 +5,14 @@ use crate::db;
 
 /// Rebuild all FTS5 indexes and return counts.
 pub fn rebuild_all_fts(conn: &Connection) -> Result<Vec<(String, i64)>> {
-    let mut counts = Vec::new();
-
-    counts.push(("messages".into(), populate_messages_fts(conn)?));
-    counts.push(("notes".into(), populate_notes_fts(conn)?));
-    counts.push(("contacts".into(), populate_contacts_fts(conn)?));
-    counts.push(("photos".into(), populate_photos_fts(conn)?));
-    counts.push(("documents".into(), populate_documents_fts(conn)?));
-    counts.push(("reminders".into(), populate_reminders_fts(conn)?));
+    let counts = vec![
+        ("messages".into(), populate_messages_fts(conn)?),
+        ("notes".into(), populate_notes_fts(conn)?),
+        ("contacts".into(), populate_contacts_fts(conn)?),
+        ("photos".into(), populate_photos_fts(conn)?),
+        ("documents".into(), populate_documents_fts(conn)?),
+        ("reminders".into(), populate_reminders_fts(conn)?),
+    ];
 
     Ok(counts)
 }

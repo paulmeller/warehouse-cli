@@ -190,10 +190,8 @@ fn get_existing_hashes(conn: &Connection) -> Result<HashSet<String>> {
 
     let mut stmt = conn.prepare("SELECT file_hash FROM documents WHERE file_hash IS NOT NULL")?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-    for row in rows {
-        if let Ok(hash) = row {
-            hashes.insert(hash);
-        }
+    for hash in rows.flatten() {
+        hashes.insert(hash);
     }
     Ok(hashes)
 }
