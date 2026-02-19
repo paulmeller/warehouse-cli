@@ -15,7 +15,14 @@ A fast CLI tool that consolidates your personal data into a single searchable da
 
 ## Installation
 
-### From release (recommended)
+### Homebrew (recommended)
+
+```bash
+brew tap paulmeller/tap
+brew install warehouse
+```
+
+### From release
 
 Download the latest binary from [Releases](https://github.com/paulmeller/warehouse-cli/releases):
 
