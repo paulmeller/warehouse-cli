@@ -2,6 +2,88 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OpenFlags};
 
 use crate::config::{self, Config};
+use crate::connector::Connector;
+use crate::db;
+
+pub struct MessagesConnector;
+
+impl Connector for MessagesConnector {
+    fn name(&self) -> &str {
+        "imessages"
+    }
+
+    fn description(&self) -> &str {
+        "iMessage conversations"
+    }
+
+    fn create_source_tables(&self, conn: &Connection) -> Result<()> {
+        create_tables(conn)
+    }
+
+    fn extract(&self, conn: &Connection, config: &Config) -> Result<usize> {
+        extract(conn, config)
+    }
+
+    fn fts_schema_sql(&self) -> Option<&str> {
+        Some(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                sender_name,
+                chat_name,
+                text,
+                tokenize='porter unicode61'
+            );
+
+            CREATE TABLE IF NOT EXISTS messages_fts_map (
+                fts_rowid INTEGER PRIMARY KEY,
+                message_id INTEGER NOT NULL,
+                UNIQUE(message_id)
+            );",
+        )
+    }
+
+    fn populate_fts(&self, conn: &Connection) -> Result<i64> {
+        if !db::table_exists(conn, "imessage_messages") {
+            return Ok(0);
+        }
+
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch("DELETE FROM messages_fts; DELETE FROM messages_fts_map;")?;
+
+        tx.execute_batch(
+            "INSERT INTO messages_fts(rowid, sender_name, chat_name, text)
+            SELECT
+                m.message_id,
+                CASE
+                    WHEN m.is_from_me = 1 THEN 'Me'
+                    ELSE COALESCE(
+                        MAX(TRIM(COALESCE(c.given_name, '') || ' ' || COALESCE(c.family_name, ''))),
+                        h.identifier,
+                        'Unknown'
+                    )
+                END,
+                COALESCE(ch.display_name, ch.chat_identifier, ''),
+                m.text
+            FROM imessage_messages m
+            LEFT JOIN imessage_handles h ON m.handle_id = h.handle_id
+            LEFT JOIN contact_phones cp ON h.identifier = cp.phone_number
+            LEFT JOIN contact_emails ce ON h.identifier = ce.email
+            LEFT JOIN contacts c ON c.identifier = COALESCE(
+                cp.contact_identifier, ce.contact_identifier
+            )
+            LEFT JOIN imessage_chats ch ON m.chat_id = ch.chat_id
+            WHERE m.text IS NOT NULL AND m.text != ''
+            GROUP BY m.message_id;
+
+            INSERT INTO messages_fts_map(fts_rowid, message_id)
+            SELECT message_id, message_id FROM imessage_messages
+            WHERE text IS NOT NULL AND text != '';",
+        )?;
+
+        let count: i64 = tx.query_row("SELECT COUNT(*) FROM messages_fts", [], |r| r.get(0))?;
+        tx.commit()?;
+        Ok(count)
+    }
+}
 
 /// Extract iMessages from chat.db into warehouse.
 pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {

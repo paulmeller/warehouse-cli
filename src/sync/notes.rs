@@ -6,6 +6,76 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::config::{self, Config};
+use crate::connector::Connector;
+use crate::db;
+
+pub struct NotesConnector;
+
+impl Connector for NotesConnector {
+    fn name(&self) -> &str {
+        "obsidian"
+    }
+
+    fn description(&self) -> &str {
+        "Obsidian markdown notes"
+    }
+
+    fn create_source_tables(&self, conn: &Connection) -> Result<()> {
+        create_tables(conn)
+    }
+
+    fn extract(&self, conn: &Connection, config: &Config) -> Result<usize> {
+        extract(conn, config)
+    }
+
+    fn fts_schema_sql(&self) -> Option<&str> {
+        Some(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+                title,
+                body,
+                tags,
+                tokenize='porter unicode61'
+            );
+
+            CREATE TABLE IF NOT EXISTS notes_fts_map (
+                fts_rowid INTEGER PRIMARY KEY,
+                note_id INTEGER NOT NULL,
+                UNIQUE(note_id)
+            );",
+        )
+    }
+
+    fn populate_fts(&self, conn: &Connection) -> Result<i64> {
+        if !db::table_exists(conn, "obsidian_notes") {
+            return Ok(0);
+        }
+
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch("DELETE FROM notes_fts; DELETE FROM notes_fts_map;")?;
+
+        tx.execute_batch(
+            "INSERT INTO notes_fts(rowid, title, body, tags)
+            SELECT
+                n.id,
+                COALESCE(n.title, ''),
+                COALESCE(n.body, ''),
+                COALESCE(
+                    (SELECT GROUP_CONCAT(tag, ' ')
+                     FROM obsidian_tags
+                     WHERE note_id = n.id),
+                    ''
+                )
+            FROM obsidian_notes n;
+
+            INSERT INTO notes_fts_map(fts_rowid, note_id)
+            SELECT id, id FROM obsidian_notes;",
+        )?;
+
+        let count: i64 = tx.query_row("SELECT COUNT(*) FROM notes_fts", [], |r| r.get(0))?;
+        tx.commit()?;
+        Ok(count)
+    }
+}
 
 /// Extract Obsidian notes from vault directories into warehouse.
 pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {

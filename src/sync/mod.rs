@@ -5,10 +5,9 @@ pub mod notes;
 pub mod photos;
 pub mod reminders;
 
-use anyhow::Result;
-use rusqlite::Connection;
-
 use crate::config::Config;
+use crate::connector::{Connector, ConnectorRegistry};
+use rusqlite::Connection;
 
 pub struct SyncResult {
     pub source: String,
@@ -22,52 +21,50 @@ pub enum SyncStatus {
     Failed(String),
 }
 
-type Extractor = fn(&Connection, &Config) -> Result<usize>;
-
-fn get_extractors() -> Vec<(&'static str, Extractor)> {
-    vec![
-        ("contacts", contacts::extract as Extractor),
-        ("imessages", messages::extract as Extractor),
-        ("photos", photos::extract as Extractor),
-        ("reminders", reminders::extract as Extractor),
-        ("obsidian", notes::extract as Extractor),
-        ("documents", documents::extract as Extractor),
-    ]
-}
-
 /// Sync all data sources.
-pub fn sync_all(conn: &Connection, config: &Config) -> Vec<SyncResult> {
-    let extractors = get_extractors();
-    run_extractors(conn, config, &extractors)
+pub fn sync_all(
+    conn: &Connection,
+    config: &Config,
+    registry: &ConnectorRegistry,
+) -> Vec<SyncResult> {
+    let connectors: Vec<&dyn Connector> = registry.all().iter().map(|c| c.as_ref()).collect();
+    run_connectors(conn, config, &connectors)
 }
 
 /// Sync specific data sources.
-pub fn sync_sources(conn: &Connection, config: &Config, sources: &[String]) -> Vec<SyncResult> {
-    let all = get_extractors();
-    let filtered: Vec<_> = all
-        .into_iter()
-        .filter(|(name, _)| sources.iter().any(|s| s == name))
+pub fn sync_sources(
+    conn: &Connection,
+    config: &Config,
+    sources: &[String],
+    registry: &ConnectorRegistry,
+) -> Vec<SyncResult> {
+    let filtered: Vec<&dyn Connector> = registry
+        .all()
+        .iter()
+        .filter(|c| sources.iter().any(|s| s == c.name()))
+        .map(|c| c.as_ref())
         .collect();
 
     if filtered.is_empty() {
-        let names: Vec<&str> = get_extractors().iter().map(|(n, _)| *n).collect();
+        let names = registry.names();
         eprintln!("No matching sources. Available: {}", names.join(", "));
         return Vec::new();
     }
 
-    run_extractors(conn, config, &filtered)
+    run_connectors(conn, config, &filtered)
 }
 
-fn run_extractors(
+fn run_connectors(
     conn: &Connection,
     config: &Config,
-    extractors: &[(&str, Extractor)],
+    connectors: &[&dyn Connector],
 ) -> Vec<SyncResult> {
     let mut results = Vec::new();
 
-    for (name, extractor) in extractors {
+    for connector in connectors {
+        let name = connector.name();
         print!("Syncing {name}...");
-        match extractor(conn, config) {
+        match connector.extract(conn, config) {
             Ok(count) => {
                 println!(" {count} items");
                 results.push(SyncResult {

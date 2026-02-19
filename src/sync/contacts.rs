@@ -3,6 +3,75 @@ use rusqlite::{params, Connection, OpenFlags};
 use std::path::PathBuf;
 
 use crate::config::Config;
+use crate::connector::Connector;
+use crate::db;
+
+pub struct ContactsConnector;
+
+impl Connector for ContactsConnector {
+    fn name(&self) -> &str {
+        "contacts"
+    }
+
+    fn description(&self) -> &str {
+        "macOS AddressBook contacts"
+    }
+
+    fn create_source_tables(&self, conn: &Connection) -> Result<()> {
+        create_tables(conn)
+    }
+
+    fn extract(&self, conn: &Connection, config: &Config) -> Result<usize> {
+        extract(conn, config)
+    }
+
+    fn fts_schema_sql(&self) -> Option<&str> {
+        Some(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS contacts_fts USING fts5(
+                full_name,
+                organization,
+                note,
+                tokenize='porter unicode61'
+            );
+
+            CREATE TABLE IF NOT EXISTS contacts_fts_map (
+                fts_rowid INTEGER PRIMARY KEY,
+                contact_identifier TEXT NOT NULL,
+                UNIQUE(contact_identifier)
+            );",
+        )
+    }
+
+    fn populate_fts(&self, conn: &Connection) -> Result<i64> {
+        if !db::table_exists(conn, "contacts") {
+            return Ok(0);
+        }
+
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch("DELETE FROM contacts_fts; DELETE FROM contacts_fts_map;")?;
+
+        tx.execute_batch(
+            "INSERT INTO contacts_fts(rowid, full_name, organization, note)
+            SELECT
+                rowid,
+                TRIM(
+                    COALESCE(given_name, '') || ' ' ||
+                    COALESCE(family_name, '') || ' ' ||
+                    COALESCE(nickname, '')
+                ),
+                TRIM(COALESCE(organization, '') || ' ' || COALESCE(job_title, '')),
+                COALESCE(note, '')
+            FROM contacts;
+
+            INSERT INTO contacts_fts_map(fts_rowid, contact_identifier)
+            SELECT rowid, identifier FROM contacts;",
+        )?;
+
+        let count: i64 = tx.query_row("SELECT COUNT(*) FROM contacts_fts", [], |r| r.get(0))?;
+        tx.commit()?;
+        Ok(count)
+    }
+}
 
 /// Extract contacts from macOS AddressBook database into warehouse.
 pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {

@@ -98,6 +98,9 @@ pub enum Commands {
     /// First-time setup (sync + index)
     Setup,
 
+    /// List available connectors (plugins)
+    Connectors,
+
     /// Manage data source permissions
     #[command(subcommand)]
     Permissions(PermissionsSubcommand),

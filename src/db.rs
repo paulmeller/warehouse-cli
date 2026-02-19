@@ -1,6 +1,8 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+use crate::connector::ConnectorRegistry;
+
 /// Open the warehouse database.
 pub fn open(db_path: &str) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
@@ -20,105 +22,20 @@ pub fn table_count(conn: &Connection, table: &str) -> i64 {
     .unwrap_or(0)
 }
 
-/// Initialize the FTS5 search schema (matching Python's init_search_schema).
-pub fn init_search_schema(conn: &Connection) -> Result<()> {
+/// Initialize the FTS5 search schema from registered connectors.
+pub fn init_search_schema(conn: &Connection, registry: &ConnectorRegistry) -> Result<()> {
+    for connector in registry.all() {
+        if let Some(sql) = connector.fts_schema_sql() {
+            conn.execute_batch(sql)?;
+        }
+    }
+
     conn.execute_batch(
-        "
-        -- FTS5 for messages (with resolved sender names)
-        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-            sender_name,
-            chat_name,
-            text,
-            tokenize='porter unicode61'
-        );
-
-        -- FTS5 for notes
-        CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
-            title,
-            body,
-            tags,
-            tokenize='porter unicode61'
-        );
-
-        -- FTS5 for contacts
-        CREATE VIRTUAL TABLE IF NOT EXISTS contacts_fts USING fts5(
-            full_name,
-            organization,
-            note,
-            tokenize='porter unicode61'
-        );
-
-        -- FTS5 for photos
-        CREATE VIRTUAL TABLE IF NOT EXISTS photos_fts USING fts5(
-            title,
-            filename,
-            people,
-            album,
-            tokenize='porter unicode61'
-        );
-
-        -- FTS5 for documents
-        CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
-            title,
-            filename,
-            content,
-            file_type,
-            tokenize='porter unicode61'
-        );
-
-        -- FTS5 for reminders
-        CREATE VIRTUAL TABLE IF NOT EXISTS reminders_fts USING fts5(
-            title,
-            notes,
-            list_name,
-            location,
-            tokenize='porter unicode61'
-        );
-
-        -- Mapping tables
-        CREATE TABLE IF NOT EXISTS messages_fts_map (
-            fts_rowid INTEGER PRIMARY KEY,
-            message_id INTEGER NOT NULL,
-            UNIQUE(message_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS notes_fts_map (
-            fts_rowid INTEGER PRIMARY KEY,
-            note_id INTEGER NOT NULL,
-            UNIQUE(note_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS contacts_fts_map (
-            fts_rowid INTEGER PRIMARY KEY,
-            contact_identifier TEXT NOT NULL,
-            UNIQUE(contact_identifier)
-        );
-
-        CREATE TABLE IF NOT EXISTS photos_fts_map (
-            fts_rowid INTEGER PRIMARY KEY,
-            asset_id INTEGER NOT NULL,
-            UNIQUE(asset_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS documents_fts_map (
-            fts_rowid INTEGER PRIMARY KEY,
-            document_id INTEGER NOT NULL,
-            UNIQUE(document_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS reminders_fts_map (
-            fts_rowid INTEGER PRIMARY KEY,
-            reminder_id TEXT NOT NULL,
-            UNIQUE(reminder_id)
-        );
-
-        -- Search metadata table
-        CREATE TABLE IF NOT EXISTS search_metadata (
+        "CREATE TABLE IF NOT EXISTS search_metadata (
             key TEXT PRIMARY KEY,
             value TEXT,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        ",
+        );",
     )?;
     Ok(())
 }
@@ -146,10 +63,15 @@ mod tests {
 
     // ========== init_search_schema ==========
 
+    fn test_registry() -> ConnectorRegistry {
+        crate::connector::default_registry()
+    }
+
     #[test]
     fn init_search_schema_creates_fts_tables() {
         let conn = in_memory_conn();
-        init_search_schema(&conn).unwrap();
+        let registry = test_registry();
+        init_search_schema(&conn, &registry).unwrap();
 
         for table in &[
             "messages_fts",
@@ -166,7 +88,8 @@ mod tests {
     #[test]
     fn init_search_schema_creates_mapping_tables() {
         let conn = in_memory_conn();
-        init_search_schema(&conn).unwrap();
+        let registry = test_registry();
+        init_search_schema(&conn, &registry).unwrap();
 
         for table in &[
             "messages_fts_map",
@@ -186,16 +109,18 @@ mod tests {
     #[test]
     fn init_search_schema_creates_metadata_table() {
         let conn = in_memory_conn();
-        init_search_schema(&conn).unwrap();
+        let registry = test_registry();
+        init_search_schema(&conn, &registry).unwrap();
         assert!(table_exists(&conn, "search_metadata"));
     }
 
     #[test]
     fn init_search_schema_idempotent() {
         let conn = in_memory_conn();
-        init_search_schema(&conn).unwrap();
+        let registry = test_registry();
+        init_search_schema(&conn, &registry).unwrap();
         // Should not fail on second call
-        init_search_schema(&conn).unwrap();
+        init_search_schema(&conn, &registry).unwrap();
         assert!(table_exists(&conn, "messages_fts"));
     }
 

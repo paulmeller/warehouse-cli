@@ -866,10 +866,15 @@ mod tests {
 
     // ========== FTS search integration tests ==========
 
+    fn test_registry() -> crate::connector::ConnectorRegistry {
+        crate::connector::default_registry()
+    }
+
     fn setup_notes_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        crate::db::init_search_schema(&conn).unwrap();
+        let registry = test_registry();
+        crate::db::init_search_schema(&conn, &registry).unwrap();
 
         // Create source tables
         conn.execute_batch(
@@ -939,7 +944,7 @@ mod tests {
     fn fts_search_notes_returns_matches() {
         let conn = setup_notes_db();
         seed_notes(&conn);
-        crate::fts::rebuild_all_fts(&conn).unwrap();
+        crate::fts::rebuild_all_fts(&conn, &test_registry()).unwrap();
 
         let options = SearchOptions {
             types: vec!["note".to_string()],
@@ -959,7 +964,7 @@ mod tests {
         let conn = setup_notes_db();
         setup_contacts_db(&conn);
         seed_contacts(&conn);
-        crate::fts::rebuild_all_fts(&conn).unwrap();
+        crate::fts::rebuild_all_fts(&conn, &test_registry()).unwrap();
 
         let options = SearchOptions {
             types: vec!["contact".to_string()],
@@ -980,7 +985,7 @@ mod tests {
         setup_contacts_db(&conn);
         seed_notes(&conn);
         seed_contacts(&conn);
-        crate::fts::rebuild_all_fts(&conn).unwrap();
+        crate::fts::rebuild_all_fts(&conn, &test_registry()).unwrap();
 
         // Search for "rust" but only in contacts — should find nothing
         let options = SearchOptions {
@@ -999,7 +1004,7 @@ mod tests {
     fn fts_search_no_matches() {
         let conn = setup_notes_db();
         seed_notes(&conn);
-        crate::fts::rebuild_all_fts(&conn).unwrap();
+        crate::fts::rebuild_all_fts(&conn, &test_registry()).unwrap();
 
         let options = SearchOptions {
             types: vec!["note".to_string()],

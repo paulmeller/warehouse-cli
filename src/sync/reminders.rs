@@ -2,6 +2,73 @@ use anyhow::Result;
 use rusqlite::{params, Connection, OpenFlags};
 
 use crate::config::{self, Config};
+use crate::connector::Connector;
+use crate::db;
+
+pub struct RemindersConnector;
+
+impl Connector for RemindersConnector {
+    fn name(&self) -> &str {
+        "reminders"
+    }
+
+    fn description(&self) -> &str {
+        "Apple Reminders"
+    }
+
+    fn create_source_tables(&self, conn: &Connection) -> Result<()> {
+        create_tables(conn)
+    }
+
+    fn extract(&self, conn: &Connection, config: &Config) -> Result<usize> {
+        extract(conn, config)
+    }
+
+    fn fts_schema_sql(&self) -> Option<&str> {
+        Some(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS reminders_fts USING fts5(
+                title,
+                notes,
+                list_name,
+                location,
+                tokenize='porter unicode61'
+            );
+
+            CREATE TABLE IF NOT EXISTS reminders_fts_map (
+                fts_rowid INTEGER PRIMARY KEY,
+                reminder_id TEXT NOT NULL,
+                UNIQUE(reminder_id)
+            );",
+        )
+    }
+
+    fn populate_fts(&self, conn: &Connection) -> Result<i64> {
+        if !db::table_exists(conn, "reminders") {
+            return Ok(0);
+        }
+
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch("DELETE FROM reminders_fts; DELETE FROM reminders_fts_map;")?;
+
+        tx.execute_batch(
+            "INSERT INTO reminders_fts(rowid, title, notes, list_name, location)
+            SELECT
+                id,
+                COALESCE(title, ''),
+                COALESCE(notes, ''),
+                COALESCE(list_name, ''),
+                COALESCE(location, '')
+            FROM reminders;
+
+            INSERT INTO reminders_fts_map(fts_rowid, reminder_id)
+            SELECT id, reminder_id FROM reminders;",
+        )?;
+
+        let count: i64 = tx.query_row("SELECT COUNT(*) FROM reminders_fts", [], |r| r.get(0))?;
+        tx.commit()?;
+        Ok(count)
+    }
+}
 
 const APPLE_TS: &str = "978307200";
 

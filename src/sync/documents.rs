@@ -7,6 +7,73 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::config::{self, Config};
+use crate::connector::Connector;
+use crate::db;
+
+pub struct DocumentsConnector;
+
+impl Connector for DocumentsConnector {
+    fn name(&self) -> &str {
+        "documents"
+    }
+
+    fn description(&self) -> &str {
+        "PDF, DOCX, XLSX, and other documents"
+    }
+
+    fn create_source_tables(&self, conn: &Connection) -> Result<()> {
+        create_tables(conn)
+    }
+
+    fn extract(&self, conn: &Connection, config: &Config) -> Result<usize> {
+        extract(conn, config)
+    }
+
+    fn fts_schema_sql(&self) -> Option<&str> {
+        Some(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+                title,
+                filename,
+                content,
+                file_type,
+                tokenize='porter unicode61'
+            );
+
+            CREATE TABLE IF NOT EXISTS documents_fts_map (
+                fts_rowid INTEGER PRIMARY KEY,
+                document_id INTEGER NOT NULL,
+                UNIQUE(document_id)
+            );",
+        )
+    }
+
+    fn populate_fts(&self, conn: &Connection) -> Result<i64> {
+        if !db::table_exists(conn, "documents") {
+            return Ok(0);
+        }
+
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch("DELETE FROM documents_fts; DELETE FROM documents_fts_map;")?;
+
+        tx.execute_batch(
+            "INSERT INTO documents_fts(rowid, title, filename, content, file_type)
+            SELECT
+                id,
+                COALESCE(title, ''),
+                COALESCE(filename, ''),
+                COALESCE(content, ''),
+                COALESCE(file_type, '')
+            FROM documents;
+
+            INSERT INTO documents_fts_map(fts_rowid, document_id)
+            SELECT id, id FROM documents;",
+        )?;
+
+        let count: i64 = tx.query_row("SELECT COUNT(*) FROM documents_fts", [], |r| r.get(0))?;
+        tx.commit()?;
+        Ok(count)
+    }
+}
 
 /// Extract documents from configured directories into warehouse.
 pub fn extract(conn: &Connection, config: &Config) -> Result<usize> {

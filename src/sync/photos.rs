@@ -2,6 +2,79 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OpenFlags};
 
 use crate::config::{self, Config};
+use crate::connector::Connector;
+use crate::db;
+
+pub struct PhotosConnector;
+
+impl Connector for PhotosConnector {
+    fn name(&self) -> &str {
+        "photos"
+    }
+
+    fn description(&self) -> &str {
+        "Apple Photos library"
+    }
+
+    fn create_source_tables(&self, conn: &Connection) -> Result<()> {
+        create_tables(conn)
+    }
+
+    fn extract(&self, conn: &Connection, config: &Config) -> Result<usize> {
+        extract(conn, config)
+    }
+
+    fn fts_schema_sql(&self) -> Option<&str> {
+        Some(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS photos_fts USING fts5(
+                title,
+                filename,
+                people,
+                album,
+                tokenize='porter unicode61'
+            );
+
+            CREATE TABLE IF NOT EXISTS photos_fts_map (
+                fts_rowid INTEGER PRIMARY KEY,
+                asset_id INTEGER NOT NULL,
+                UNIQUE(asset_id)
+            );",
+        )
+    }
+
+    fn populate_fts(&self, conn: &Connection) -> Result<i64> {
+        if !db::table_exists(conn, "photos_assets") {
+            return Ok(0);
+        }
+
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch("DELETE FROM photos_fts; DELETE FROM photos_fts_map;")?;
+
+        tx.execute_batch(
+            "INSERT INTO photos_fts(rowid, title, filename, people, album)
+            SELECT
+                a.asset_id,
+                COALESCE(a.title, ''),
+                COALESCE(a.filename, ''),
+                COALESCE(
+                    (SELECT GROUP_CONCAT(COALESCE(p.full_name, p.display_name), ' ')
+                     FROM photos_faces f
+                     JOIN photos_people p ON f.person_id = p.person_id
+                     WHERE f.asset_id = a.asset_id),
+                    ''
+                ),
+                ''
+            FROM photos_assets a;
+
+            INSERT INTO photos_fts_map(fts_rowid, asset_id)
+            SELECT asset_id, asset_id FROM photos_assets;",
+        )?;
+
+        let count: i64 = tx.query_row("SELECT COUNT(*) FROM photos_fts", [], |r| r.get(0))?;
+        tx.commit()?;
+        Ok(count)
+    }
+}
 
 /// Extract Apple Photos metadata into warehouse.
 pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {

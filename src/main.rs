@@ -2,6 +2,7 @@ mod audit;
 mod browse;
 mod cli;
 mod config;
+mod connector;
 mod db;
 mod fts;
 mod governance;
@@ -40,6 +41,7 @@ fn main() -> Result<()> {
         Commands::Schedule(sub) => cmd_schedule(sub),
         Commands::Doctor => cmd_doctor(),
         Commands::Setup => cmd_setup(&db_path),
+        Commands::Connectors => cmd_connectors(),
         Commands::Permissions(sub) => cmd_permissions(sub),
         Commands::Audit(args) => cmd_audit(args),
     }
@@ -50,16 +52,18 @@ fn cmd_init(db_path: &str) -> Result<()> {
         anyhow::bail!("Database not found: {db_path}");
     }
     let conn = db::open(db_path)?;
-    db::init_search_schema(&conn)?;
+    let registry = connector::default_registry();
+    db::init_search_schema(&conn, &registry)?;
     println!("Search schema initialized.");
     Ok(())
 }
 
 fn cmd_index(db_path: &str) -> Result<()> {
     let conn = db::open(db_path)?;
-    db::init_search_schema(&conn)?;
+    let registry = connector::default_registry();
+    db::init_search_schema(&conn, &registry)?;
     println!("Building FTS5 indexes...");
-    let counts = fts::rebuild_all_fts(&conn)?;
+    let counts = fts::rebuild_all_fts(&conn, &registry)?;
     println!();
     println!("Indexed:");
     for (name, count) in &counts {
@@ -311,11 +315,12 @@ fn cmd_sync(db_path: &str, args: cli::SyncArgs) -> Result<()> {
 
     let conn = db::open(db_path)?;
     let cfg = config::load_config();
+    let registry = connector::default_registry();
 
     let results = if args.sources.is_empty() {
-        sync::sync_all(&conn, &cfg)
+        sync::sync_all(&conn, &cfg, &registry)
     } else {
-        sync::sync_sources(&conn, &cfg, &args.sources)
+        sync::sync_sources(&conn, &cfg, &args.sources, &registry)
     };
 
     match args.format.as_str() {
@@ -467,14 +472,15 @@ fn cmd_setup(db_path: &str) -> Result<()> {
     println!("Syncing data sources...");
     let conn = db::open(db_path)?;
     let cfg = config::load_config();
-    let results = sync::sync_all(&conn, &cfg);
+    let registry = connector::default_registry();
+    let results = sync::sync_all(&conn, &cfg, &registry);
     sync::print_summary(&results);
 
     // Step 4: Build FTS indexes
     println!();
     println!("Building FTS5 indexes...");
-    db::init_search_schema(&conn)?;
-    let counts = fts::rebuild_all_fts(&conn)?;
+    db::init_search_schema(&conn, &registry)?;
+    let counts = fts::rebuild_all_fts(&conn, &registry)?;
     println!("Indexed:");
     for (name, count) in &counts {
         println!("  {name:12} {count:>10}");
@@ -485,6 +491,23 @@ fn cmd_setup(db_path: &str) -> Result<()> {
     println!("  warehouse search \"your query\"");
     println!("  warehouse status");
     println!("  warehouse doctor");
+    Ok(())
+}
+
+fn cmd_connectors() -> Result<()> {
+    let registry = connector::default_registry();
+    println!("Available connectors:");
+    println!();
+    for c in registry.all() {
+        let fts = if c.fts_schema_sql().is_some() {
+            "search"
+        } else {
+            "sync only"
+        };
+        println!("  {:<15} {} [{}]", c.name(), c.description(), fts);
+    }
+    println!();
+    println!("{} connector(s) registered", registry.all().len());
     Ok(())
 }
 
