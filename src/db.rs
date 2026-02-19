@@ -133,3 +133,99 @@ pub fn table_exists(conn: &Connection, table: &str) -> bool {
     .unwrap_or(0)
         > 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn in_memory_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        conn
+    }
+
+    // ========== init_search_schema ==========
+
+    #[test]
+    fn init_search_schema_creates_fts_tables() {
+        let conn = in_memory_conn();
+        init_search_schema(&conn).unwrap();
+
+        for table in &["messages_fts", "notes_fts", "contacts_fts", "photos_fts", "documents_fts", "reminders_fts"] {
+            assert!(table_exists(&conn, table), "FTS table {table} should exist");
+        }
+    }
+
+    #[test]
+    fn init_search_schema_creates_mapping_tables() {
+        let conn = in_memory_conn();
+        init_search_schema(&conn).unwrap();
+
+        for table in &["messages_fts_map", "notes_fts_map", "contacts_fts_map", "photos_fts_map", "documents_fts_map", "reminders_fts_map"] {
+            assert!(table_exists(&conn, table), "Mapping table {table} should exist");
+        }
+    }
+
+    #[test]
+    fn init_search_schema_creates_metadata_table() {
+        let conn = in_memory_conn();
+        init_search_schema(&conn).unwrap();
+        assert!(table_exists(&conn, "search_metadata"));
+    }
+
+    #[test]
+    fn init_search_schema_idempotent() {
+        let conn = in_memory_conn();
+        init_search_schema(&conn).unwrap();
+        // Should not fail on second call
+        init_search_schema(&conn).unwrap();
+        assert!(table_exists(&conn, "messages_fts"));
+    }
+
+    // ========== table_exists ==========
+
+    #[test]
+    fn table_exists_true_for_existing() {
+        let conn = in_memory_conn();
+        conn.execute_batch("CREATE TABLE test_table (id INTEGER)").unwrap();
+        assert!(table_exists(&conn, "test_table"));
+    }
+
+    #[test]
+    fn table_exists_false_for_missing() {
+        let conn = in_memory_conn();
+        assert!(!table_exists(&conn, "nonexistent_table"));
+    }
+
+    // ========== table_count ==========
+
+    #[test]
+    fn table_count_empty_table() {
+        let conn = in_memory_conn();
+        conn.execute_batch("CREATE TABLE items (id INTEGER)").unwrap();
+        assert_eq!(table_count(&conn, "items"), 0);
+    }
+
+    #[test]
+    fn table_count_with_rows() {
+        let conn = in_memory_conn();
+        conn.execute_batch("CREATE TABLE items (id INTEGER)").unwrap();
+        conn.execute("INSERT INTO items VALUES (1)", []).unwrap();
+        conn.execute("INSERT INTO items VALUES (2)", []).unwrap();
+        conn.execute("INSERT INTO items VALUES (3)", []).unwrap();
+        assert_eq!(table_count(&conn, "items"), 3);
+    }
+
+    #[test]
+    fn table_count_missing_table() {
+        let conn = in_memory_conn();
+        assert_eq!(table_count(&conn, "nonexistent"), 0);
+    }
+
+    #[test]
+    fn table_count_sql_injection_blocked() {
+        let conn = in_memory_conn();
+        // Attempt SQL injection through table name
+        assert_eq!(table_count(&conn, "items; DROP TABLE items"), 0);
+    }
+}

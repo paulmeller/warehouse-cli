@@ -695,3 +695,292 @@ pub fn format_markdown(results: &[SearchResult]) -> String {
     }
     lines.join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== escape_fts_query ==========
+
+    #[test]
+    fn escape_fts_query_empty_string() {
+        assert_eq!(escape_fts_query(""), "\"\"");
+    }
+
+    #[test]
+    fn escape_fts_query_whitespace_only() {
+        assert_eq!(escape_fts_query("   "), "\"\"");
+    }
+
+    #[test]
+    fn escape_fts_query_simple_terms() {
+        let result = escape_fts_query("hello world");
+        assert!(result.contains("hello"));
+        assert!(result.contains("world"));
+        assert!(result.contains(" OR "));
+    }
+
+    #[test]
+    fn escape_fts_query_quoted_phrase() {
+        let result = escape_fts_query("\"exact match\"");
+        assert!(result.contains("\"exact match\""));
+    }
+
+    #[test]
+    fn escape_fts_query_negation() {
+        let result = escape_fts_query("-excluded");
+        assert!(result.contains("NOT excluded"));
+    }
+
+    #[test]
+    fn escape_fts_query_special_chars_stripped() {
+        let result = escape_fts_query("test*query:with^special(chars)~more'stuff");
+        assert!(!result.contains('*'));
+        assert!(!result.contains(':'));
+        assert!(!result.contains('^'));
+        assert!(!result.contains('('));
+        assert!(!result.contains(')'));
+        assert!(!result.contains('~'));
+        assert!(!result.contains('\''));
+    }
+
+    #[test]
+    fn escape_fts_query_mixed_quoted_and_terms() {
+        let result = escape_fts_query("\"hello world\" foo");
+        assert!(result.contains("\"hello world\""));
+        assert!(result.contains("foo"));
+    }
+
+    // ========== ensure_type_diversity ==========
+
+    fn make_result(result_type: &str, id: &str, score: f64) -> SearchResult {
+        SearchResult {
+            result_type: result_type.into(),
+            id: id.into(),
+            title: format!("Title {id}"),
+            snippet: String::new(),
+            score,
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn diversity_single_type_passthrough() {
+        let results = vec![
+            make_result("note", "1", 0.9),
+            make_result("note", "2", 0.8),
+        ];
+        let types = vec!["note".to_string()];
+        let diverse = ensure_type_diversity(results.clone(), &types, 10);
+        assert_eq!(diverse.len(), 2);
+    }
+
+    #[test]
+    fn diversity_empty_results() {
+        let results: Vec<SearchResult> = vec![];
+        let types = vec!["note".to_string(), "contact".to_string()];
+        let diverse = ensure_type_diversity(results, &types, 10);
+        assert!(diverse.is_empty());
+    }
+
+    #[test]
+    fn diversity_multi_type_balancing() {
+        let mut results = Vec::new();
+        for i in 0..10 {
+            results.push(make_result("note", &format!("n{i}"), 0.9 - i as f64 * 0.01));
+        }
+        for i in 0..3 {
+            results.push(make_result("contact", &format!("c{i}"), 0.5 - i as f64 * 0.01));
+        }
+        let types = vec!["note".to_string(), "contact".to_string()];
+        let diverse = ensure_type_diversity(results, &types, 10);
+        let contact_count = diverse.iter().filter(|r| r.result_type == "contact").count();
+        // Contacts should get at least min_per_type representation
+        assert!(contact_count >= 2);
+    }
+
+    // ========== format_csv ==========
+
+    #[test]
+    fn format_csv_basic() {
+        let results = vec![make_result("note", "1", 0.95)];
+        let csv = format_csv(&results);
+        assert!(csv.starts_with("type,id,title,snippet,score,date\n"));
+        assert!(csv.contains("note"));
+        assert!(csv.contains("0.9500"));
+    }
+
+    #[test]
+    fn format_csv_quote_escaping() {
+        let mut r = make_result("note", "1", 0.5);
+        r.title = "Title with \"quotes\"".into();
+        let csv = format_csv(&[r]);
+        assert!(csv.contains("\"\""));
+    }
+
+    // ========== format_markdown ==========
+
+    #[test]
+    fn format_markdown_score_display() {
+        let results = vec![make_result("note", "1", 0.75)];
+        let md = format_markdown(&results);
+        assert!(md.contains("## [NOTE] Title 1"));
+        assert!(md.contains("**Score:** 75%"));
+        assert!(md.contains("**ID:** 1"));
+    }
+
+    #[test]
+    fn format_markdown_with_metadata() {
+        let mut r = make_result("note", "1", 0.5);
+        r.metadata.insert("path".into(), serde_json::Value::String("/some/path".into()));
+        let md = format_markdown(&[r]);
+        assert!(md.contains("**path:** /some/path"));
+    }
+
+    // ========== FTS search integration tests ==========
+
+    fn setup_notes_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        crate::db::init_search_schema(&conn).unwrap();
+
+        // Create source tables
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS obsidian_notes (
+                id INTEGER PRIMARY KEY,
+                title TEXT,
+                body TEXT,
+                content TEXT,
+                file_path TEXT,
+                created_at TEXT,
+                modified_at TEXT,
+                vault_name TEXT
+            );
+            CREATE TABLE IF NOT EXISTS obsidian_tags (
+                note_id INTEGER,
+                tag TEXT
+            );",
+        ).unwrap();
+
+        conn
+    }
+
+    fn seed_notes(conn: &Connection) {
+        conn.execute(
+            "INSERT INTO obsidian_notes (id, title, body, file_path, modified_at) VALUES (1, 'Rust Programming', 'Learning about ownership and borrowing in Rust', '/vault/rust.md', '2024-01-15')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO obsidian_notes (id, title, body, file_path, modified_at) VALUES (2, 'Python Tips', 'Python decorators and generators explained', '/vault/python.md', '2024-01-16')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO obsidian_notes (id, title, body, file_path, modified_at) VALUES (3, 'Meeting Notes', 'Discussed project timeline and Rust migration', '/vault/meeting.md', '2024-01-17')",
+            [],
+        ).unwrap();
+    }
+
+    fn setup_contacts_db(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS contacts (
+                identifier TEXT PRIMARY KEY,
+                given_name TEXT,
+                family_name TEXT,
+                organization TEXT,
+                job_title TEXT,
+                note TEXT,
+                birthday TEXT,
+                nickname TEXT
+            );",
+        ).unwrap();
+    }
+
+    fn seed_contacts(conn: &Connection) {
+        conn.execute(
+            "INSERT INTO contacts (identifier, given_name, family_name, organization, job_title) VALUES ('c1', 'Alice', 'Smith', 'Acme Corp', 'Engineer')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO contacts (identifier, given_name, family_name, organization, job_title) VALUES ('c2', 'Bob', 'Jones', 'Widgets Inc', 'Designer')",
+            [],
+        ).unwrap();
+    }
+
+    #[test]
+    fn fts_search_notes_returns_matches() {
+        let conn = setup_notes_db();
+        seed_notes(&conn);
+        crate::fts::rebuild_all_fts(&conn).unwrap();
+
+        let options = SearchOptions {
+            types: vec!["note".to_string()],
+            limit: 10,
+            date_from: None,
+            date_to: None,
+            contact: None,
+            min_score: 0.0,
+        };
+        let results = fts_search(&conn, "rust", &options).unwrap();
+        assert!(!results.is_empty());
+        assert!(results.iter().all(|r| r.result_type == "note"));
+    }
+
+    #[test]
+    fn fts_search_contacts_returns_matches() {
+        let conn = setup_notes_db();
+        setup_contacts_db(&conn);
+        seed_contacts(&conn);
+        crate::fts::rebuild_all_fts(&conn).unwrap();
+
+        let options = SearchOptions {
+            types: vec!["contact".to_string()],
+            limit: 10,
+            date_from: None,
+            date_to: None,
+            contact: None,
+            min_score: 0.0,
+        };
+        let results = fts_search(&conn, "alice", &options).unwrap();
+        assert!(!results.is_empty());
+        assert!(results.iter().all(|r| r.result_type == "contact"));
+    }
+
+    #[test]
+    fn fts_search_type_filtering() {
+        let conn = setup_notes_db();
+        setup_contacts_db(&conn);
+        seed_notes(&conn);
+        seed_contacts(&conn);
+        crate::fts::rebuild_all_fts(&conn).unwrap();
+
+        // Search for "rust" but only in contacts — should find nothing
+        let options = SearchOptions {
+            types: vec!["contact".to_string()],
+            limit: 10,
+            date_from: None,
+            date_to: None,
+            contact: None,
+            min_score: 0.0,
+        };
+        let results = fts_search(&conn, "rust", &options).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn fts_search_no_matches() {
+        let conn = setup_notes_db();
+        seed_notes(&conn);
+        crate::fts::rebuild_all_fts(&conn).unwrap();
+
+        let options = SearchOptions {
+            types: vec!["note".to_string()],
+            limit: 10,
+            date_from: None,
+            date_to: None,
+            contact: None,
+            min_score: 0.0,
+        };
+        let results = fts_search(&conn, "xyznonexistent", &options).unwrap();
+        assert!(results.is_empty());
+    }
+}

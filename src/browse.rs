@@ -1387,3 +1387,58 @@ fn print_section(label: &str, data: Option<&serde_json::Value>) {
 fn truncate_str(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== truncate_str ==========
+
+    #[test]
+    fn truncate_str_normal() {
+        assert_eq!(truncate_str("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_str_empty() {
+        assert_eq!(truncate_str("", 10), "");
+    }
+
+    #[test]
+    fn truncate_str_longer_than_max() {
+        assert_eq!(truncate_str("abcdefghij", 3), "abc");
+    }
+
+    #[test]
+    fn truncate_str_exact_length() {
+        assert_eq!(truncate_str("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_str_shorter_than_max() {
+        assert_eq!(truncate_str("hi", 10), "hi");
+    }
+
+    // ========== haversine_km ==========
+
+    #[test]
+    fn haversine_known_distance() {
+        // Sydney (-33.8688, 151.2093) to Melbourne (-37.8136, 144.9631)
+        // Known distance ~714 km
+        let distance = haversine_km(-33.8688, 151.2093, -37.8136, 144.9631);
+        assert!((distance - 714.0).abs() < 20.0, "Expected ~714km, got {distance}");
+    }
+
+    #[test]
+    fn haversine_same_point() {
+        let distance = haversine_km(40.0, -74.0, 40.0, -74.0);
+        assert!((distance - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn haversine_equator_one_degree() {
+        // One degree of longitude at equator ~111 km
+        let distance = haversine_km(0.0, 0.0, 0.0, 1.0);
+        assert!((distance - 111.0).abs() < 1.0, "Expected ~111km, got {distance}");
+    }
+}

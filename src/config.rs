@@ -450,3 +450,80 @@ pub fn apple_timestamp_to_iso(timestamp: f64) -> Option<String> {
     chrono::DateTime::from_timestamp(unix_ts, 0)
         .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== apple_timestamp_to_iso ==========
+
+    #[test]
+    fn apple_timestamp_zero_returns_none() {
+        assert_eq!(apple_timestamp_to_iso(0.0), None);
+    }
+
+    #[test]
+    fn apple_timestamp_known_value() {
+        // Apple epoch 0 = 2001-01-01T00:00:00 UTC
+        // Seconds since Apple epoch for 2024-01-01 00:00:00 UTC:
+        // 2024-01-01 in unix = 1704067200, minus APPLE_EPOCH_OFFSET = 725760000
+        let ts = 725760000.0;
+        let result = apple_timestamp_to_iso(ts).unwrap();
+        assert_eq!(result, "2024-01-01T00:00:00");
+    }
+
+    #[test]
+    fn apple_timestamp_nanosecond_format() {
+        // Same timestamp in nanoseconds: 725760000 * 1e9
+        let ts = 725760000.0 * 1e9;
+        let result = apple_timestamp_to_iso(ts).unwrap();
+        assert_eq!(result, "2024-01-01T00:00:00");
+    }
+
+    // ========== expand_path ==========
+
+    #[test]
+    fn expand_path_tilde() {
+        let result = expand_path("~/Documents");
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(result, home.join("Documents"));
+    }
+
+    #[test]
+    fn expand_path_absolute_passthrough() {
+        let result = expand_path("/usr/local/bin");
+        assert_eq!(result, PathBuf::from("/usr/local/bin"));
+    }
+
+    #[test]
+    fn expand_path_relative_passthrough() {
+        let result = expand_path("relative/path");
+        assert_eq!(result, PathBuf::from("relative/path"));
+    }
+
+    // ========== Config::default ==========
+
+    #[test]
+    fn config_default_discovery_enabled() {
+        let cfg = Config::default();
+        assert!(cfg.discovery.enabled);
+    }
+
+    #[test]
+    fn config_default_backend() {
+        let cfg = Config::default();
+        assert_eq!(cfg.documents.backend, "markitdown");
+    }
+
+    #[test]
+    fn config_default_max_size() {
+        let cfg = Config::default();
+        assert_eq!(cfg.documents.max_file_size_mb, 50);
+    }
+
+    #[test]
+    fn config_default_skip_hidden() {
+        let cfg = Config::default();
+        assert!(cfg.documents.skip_hidden);
+    }
+}
