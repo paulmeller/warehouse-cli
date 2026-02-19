@@ -13,12 +13,31 @@ A fast CLI tool that consolidates your personal data into a single searchable da
 - **Documents** — PDF, DOCX, XLSX, PPTX text extraction
 - **Reminders** — lists, due dates, priorities
 
+## Installation
+
+### From release (recommended)
+
+Download the latest binary from [Releases](https://github.com/paulmeller/warehouse-cli/releases):
+
+```bash
+# Apple Silicon (M1/M2/M3/M4)
+curl -L https://github.com/paulmeller/warehouse-cli/releases/latest/download/warehouse-macos-arm64.tar.gz | tar xz
+sudo mv warehouse /usr/local/bin/
+
+# Intel Mac
+curl -L https://github.com/paulmeller/warehouse-cli/releases/latest/download/warehouse-macos-x86_64.tar.gz | tar xz
+sudo mv warehouse /usr/local/bin/
+```
+
+### From source
+
+```bash
+cargo install --path .
+```
+
 ## Quick Start
 
 ```bash
-# Install (from source)
-cargo install --path .
-
 # Initialize configuration
 warehouse init
 
