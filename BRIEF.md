@@ -101,25 +101,39 @@ This is the same kind of layered access control you'd expect from an
 enterprise data platform, applied to your personal data on a single
 machine.
 
-## Why this matters for Claws / AI agents
+## How agents use Warehouse
 
-Claws (OpenClaw, NanoClaw, etc.) are the emerging orchestration layer
-for personal AI agents. They handle scheduling, tool calls, persistence.
-But they need data to operate on.
+Agents interact with Warehouse through two interfaces:
 
-Warehouse is the **governed data layer** for your Claw:
+1. **CLI** — the agent calls `warehouse search`, `warehouse messages`,
+   etc. as shell commands. Works with any agent that can execute commands.
 
-- **Your Claw calls `warehouse search` as a tool** — and gets results
-  that have already been filtered and redacted according to your rules
-- **You don't have to trust your Claw with raw data access** — Warehouse
-  mediates every query
-- **You can see exactly what your Claw accessed** — the audit trail is
-  your receipt
-- **You can tighten or loosen access at any time** — without restarting
-  or reconfiguring the Claw itself
+2. **Agent skill** — a skill definition (to be created) that wraps the
+   CLI into a structured tool the agent can call natively. The skill
+   describes the available commands, parameters, and output formats so
+   the agent doesn't need to guess at CLI syntax.
 
-The Claw doesn't even need to know about the governance layer. It just
-gets search results. The filtering happens before the results reach it.
+Both interfaces go through the same governance layer. The agent never
+touches the SQLite database directly — every query is mediated by
+Warehouse's permission and redaction logic.
+
+**What the agent experiences:**
+
+- It calls `warehouse search "dinner plans"` and gets back filtered,
+  redacted results — it never knows what was withheld
+- Blocked sources simply don't appear in results
+- Restricted fields are removed before the agent sees them
+- The agent doesn't need to know about the governance layer at all
+
+**What you experience:**
+
+- `warehouse audit --week` shows you exactly what the agent queried
+- You can tighten or loosen access at any time without reconfiguring
+  the agent
+- You can see every blocked access attempt and every redacted field
+
+This works with any agent framework — OpenClaw, NanoClaw, Claude Code,
+custom setups. No lock-in. If it can shell out or use a skill, it works.
 
 ## Who this is for
 
@@ -166,7 +180,7 @@ across their macOS data with explicit control over what's queryable.
 | Apple Spotlight | No API, no structured access, no agent integration |
 | Rewind.ai / Recall | Cloud-dependent, screen recording, no field-level control |
 | Khoj | Self-hosted AI search — bigger, more opinionated, no governance layer |
-| Custom MCP servers | Usually all-or-nothing access, no field redaction or audit |
+| MCP servers | Usually all-or-nothing access, no field redaction or audit |
 
 ## Launch channels & tone
 
@@ -191,17 +205,16 @@ machine."
 layer. "Before you give your Claw access to your iMessages, consider what
 'access' means. Warehouse lets you control exactly which sources, which
 fields, and which time ranges your Claw can see — and logs every query it
-makes."
+makes." Include practical setup: install, permissions setup, add the agent
+skill, done.
 
 ---
 
 ## Open questions
 
-- [ ] MCP server — would let Claws that support MCP discover warehouse as
-      a tool automatically, with the governance layer transparent. High
-      priority?
-- [ ] `warehouse serve` — lightweight HTTP API for agents that prefer HTTP
-      over shell exec. Governance enforced server-side.
+- [ ] Agent skill definition — what commands/parameters does the skill
+      expose? Likely: search, messages, contacts, notes, person, timeline.
+      Needs to feel natural to the agent without leaking implementation.
 - [ ] Demo strategy — what's the most compelling 30-second demo? Probably:
       permissions setup → agent query → audit showing what was accessed and
       what was redacted.
