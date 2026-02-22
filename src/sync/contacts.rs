@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use crate::config::Config;
 use crate::connector::Connector;
 use crate::db;
+use crate::search;
+use crate::sync::SyncContext;
 
 pub struct ContactsConnector;
 
@@ -21,7 +23,8 @@ impl Connector for ContactsConnector {
         create_tables(conn)
     }
 
-    fn extract(&self, conn: &Connection, config: &Config) -> Result<usize> {
+    fn extract(&self, conn: &Connection, config: &Config, _ctx: &SyncContext) -> Result<usize> {
+        // Contacts always does full sync — no usable modification timestamp in AddressBook
         extract(conn, config)
     }
 
@@ -70,6 +73,28 @@ impl Connector for ContactsConnector {
         let count: i64 = tx.query_row("SELECT COUNT(*) FROM contacts_fts", [], |r| r.get(0))?;
         tx.commit()?;
         Ok(count)
+    }
+
+    fn governance_fields(&self) -> &[&str] {
+        &["name", "email", "phone", "address"]
+    }
+
+    fn search_types(&self) -> Vec<(&str, &str)> {
+        vec![("contact", "contacts")]
+    }
+
+    fn search_fts(
+        &self,
+        conn: &Connection,
+        search_type: &str,
+        query: &str,
+        _options: &search::SearchOptions,
+    ) -> Result<Vec<search::SearchResult>> {
+        if search_type == "contact" {
+            search::search_contacts_fts(conn, query)
+        } else {
+            Ok(vec![])
+        }
     }
 }
 

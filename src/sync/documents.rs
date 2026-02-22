@@ -9,6 +9,8 @@ use walkdir::WalkDir;
 use crate::config::{self, Config};
 use crate::connector::Connector;
 use crate::db;
+use crate::search;
+use crate::sync::SyncContext;
 
 pub struct DocumentsConnector;
 
@@ -25,7 +27,8 @@ impl Connector for DocumentsConnector {
         create_tables(conn)
     }
 
-    fn extract(&self, conn: &Connection, config: &Config) -> Result<usize> {
+    fn extract(&self, conn: &Connection, config: &Config, _ctx: &SyncContext) -> Result<usize> {
+        // Documents already has hash-based incremental skip — ctx not needed
         extract(conn, config)
     }
 
@@ -72,6 +75,32 @@ impl Connector for DocumentsConnector {
         let count: i64 = tx.query_row("SELECT COUNT(*) FROM documents_fts", [], |r| r.get(0))?;
         tx.commit()?;
         Ok(count)
+    }
+
+    fn governance_description(&self) -> &str {
+        "Text extracted from PDF, DOCX, XLSX, and PPTX files."
+    }
+
+    fn governance_fields(&self) -> &[&str] {
+        &["title", "filename", "content"]
+    }
+
+    fn search_types(&self) -> Vec<(&str, &str)> {
+        vec![("document", "documents")]
+    }
+
+    fn search_fts(
+        &self,
+        conn: &Connection,
+        search_type: &str,
+        query: &str,
+        options: &search::SearchOptions,
+    ) -> Result<Vec<search::SearchResult>> {
+        if search_type == "document" {
+            search::search_documents_fts(conn, query, options)
+        } else {
+            Ok(vec![])
+        }
     }
 }
 

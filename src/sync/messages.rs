@@ -4,6 +4,8 @@ use rusqlite::{params, Connection, OpenFlags};
 use crate::config::{self, Config};
 use crate::connector::Connector;
 use crate::db;
+use crate::search;
+use crate::sync::SyncContext;
 
 pub struct MessagesConnector;
 
@@ -20,8 +22,8 @@ impl Connector for MessagesConnector {
         create_tables(conn)
     }
 
-    fn extract(&self, conn: &Connection, config: &Config) -> Result<usize> {
-        extract(conn, config)
+    fn extract(&self, conn: &Connection, config: &Config, ctx: &SyncContext) -> Result<usize> {
+        extract(conn, config, ctx)
     }
 
     fn fts_schema_sql(&self) -> Option<&str> {
@@ -83,10 +85,45 @@ impl Connector for MessagesConnector {
         tx.commit()?;
         Ok(count)
     }
+
+    fn governance_source(&self) -> &str {
+        "messages"
+    }
+
+    fn governance_description(&self) -> &str {
+        "Your full iMessage and SMS conversation history."
+    }
+
+    fn governance_fields(&self) -> &[&str] {
+        &["sender_name", "chat_name", "text"]
+    }
+
+    fn search_types(&self) -> Vec<(&str, &str)> {
+        vec![("message", "messages")]
+    }
+
+    fn search_fts(
+        &self,
+        conn: &Connection,
+        search_type: &str,
+        query: &str,
+        options: &search::SearchOptions,
+    ) -> Result<Vec<search::SearchResult>> {
+        if search_type == "message" {
+            search::search_messages_fts(conn, query, options)
+        } else {
+            Ok(vec![])
+        }
+    }
+}
+
+/// Convert DateTime<Utc> to Apple nanoseconds (for iMessage m.date).
+fn to_apple_nanoseconds(dt: &chrono::DateTime<chrono::Utc>) -> i64 {
+    (dt.timestamp() - 978307200) * 1_000_000_000
 }
 
 /// Extract iMessages from chat.db into warehouse.
-pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {
+pub fn extract(conn: &Connection, _config: &Config, ctx: &SyncContext) -> Result<usize> {
     let chat_db_path = config::get_imessages_db_path()
         .ok_or_else(|| anyhow::anyhow!("iMessages database not found"))?;
 
@@ -97,16 +134,19 @@ pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {
 
     let tx = conn.unchecked_transaction()?;
 
-    tx.execute_batch(
-        "DELETE FROM imessage_handles;
-         DELETE FROM imessage_chats;
-         DELETE FROM imessage_messages;
-         DELETE FROM imessage_attachments;",
-    )?;
+    if !ctx.is_incremental() {
+        tx.execute_batch(
+            "DELETE FROM imessage_handles;
+             DELETE FROM imessage_chats;
+             DELETE FROM imessage_messages;
+             DELETE FROM imessage_attachments;",
+        )?;
+    }
 
+    // Handles, chats, attachments: always INSERT OR REPLACE (reference data, idempotent)
     let handles = extract_handles(&src, &tx)?;
     let chats = extract_chats(&src, &tx)?;
-    let messages = extract_messages(&src, &tx)?;
+    let messages = extract_messages(&src, &tx, ctx)?;
     let attachments = extract_attachments(&src, &tx)?;
 
     tx.commit()?;
@@ -226,9 +266,8 @@ fn extract_chats(src: &Connection, dst: &Connection) -> Result<usize> {
     Ok(count)
 }
 
-fn extract_messages(src: &Connection, dst: &Connection) -> Result<usize> {
-    let mut stmt = src.prepare(
-        "SELECT
+fn extract_messages(src: &Connection, dst: &Connection, ctx: &SyncContext) -> Result<usize> {
+    let base_sql = "SELECT
             m.ROWID,
             m.guid,
             m.text,
@@ -249,8 +288,20 @@ fn extract_messages(src: &Connection, dst: &Connection) -> Result<usize> {
             m.cache_has_attachments,
             m.is_audio_message
          FROM message m
-         LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id",
-    )?;
+         LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id";
+
+    let sql = if let Some(ref since) = ctx.since {
+        if ctx.is_incremental() {
+            let apple_ns = to_apple_nanoseconds(since);
+            format!("{base_sql} WHERE m.date > {apple_ns}")
+        } else {
+            base_sql.to_string()
+        }
+    } else {
+        base_sql.to_string()
+    };
+
+    let mut stmt = src.prepare(&sql)?;
 
     let mut insert = dst.prepare(
         "INSERT OR REPLACE INTO imessage_messages

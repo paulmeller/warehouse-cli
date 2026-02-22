@@ -4,9 +4,9 @@ use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::HashMap;
 
-pub const ALL_TYPES: &[&str] = &[
-    "message", "note", "contact", "photo", "document", "reminder",
-];
+use crate::config;
+use crate::connector::ConnectorRegistry;
+use crate::governance;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResult {
@@ -78,34 +78,28 @@ pub fn escape_fts_query(query: &str) -> String {
     all_parts.join(" OR ")
 }
 
-/// Perform FTS-only search across all content types.
+/// Perform FTS-only search across all content types using registry dispatch.
 pub fn fts_search(
     conn: &Connection,
     query: &str,
     options: &SearchOptions,
+    registry: &ConnectorRegistry,
 ) -> Result<Vec<SearchResult>> {
     let fts_query = escape_fts_query(query);
     let mut results = Vec::new();
+    let permissions_active = config::permissions_configured();
 
-    let types: Vec<&str> = options.types.iter().map(|s| s.as_str()).collect();
-
-    if types.contains(&"message") {
-        results.extend(search_messages_fts(conn, &fts_query, options)?);
-    }
-    if types.contains(&"note") {
-        results.extend(search_notes_fts(conn, &fts_query, options)?);
-    }
-    if types.contains(&"contact") {
-        results.extend(search_contacts_fts(conn, &fts_query)?);
-    }
-    if types.contains(&"photo") {
-        results.extend(search_photos_fts(conn, &fts_query, options)?);
-    }
-    if types.contains(&"document") {
-        results.extend(search_documents_fts(conn, &fts_query, options)?);
-    }
-    if types.contains(&"reminder") {
-        results.extend(search_reminders_fts(conn, &fts_query, options)?);
+    for search_type in &options.types {
+        for connector in registry.connectors_for_search_type(search_type) {
+            // Per-connector permission check
+            if permissions_active {
+                let source = connector.governance_source();
+                if !governance::is_source_allowed(source) {
+                    continue;
+                }
+            }
+            results.extend(connector.search_fts(conn, search_type, &fts_query, options)?);
+        }
     }
 
     // Sort by score descending
@@ -200,7 +194,7 @@ fn ensure_type_diversity(
     diverse
 }
 
-fn search_messages_fts(
+pub fn search_messages_fts(
     conn: &Connection,
     query: &str,
     options: &SearchOptions,
@@ -269,7 +263,7 @@ fn search_messages_fts(
     }
 }
 
-fn search_notes_fts(
+pub fn search_notes_fts(
     conn: &Connection,
     query: &str,
     options: &SearchOptions,
@@ -334,7 +328,7 @@ fn search_notes_fts(
     }
 }
 
-fn search_contacts_fts(conn: &Connection, query: &str) -> Result<Vec<SearchResult>> {
+pub fn search_contacts_fts(conn: &Connection, query: &str) -> Result<Vec<SearchResult>> {
     let sql = "SELECT
             'contact' as type,
             map.contact_identifier as id,
@@ -383,7 +377,7 @@ fn search_contacts_fts(conn: &Connection, query: &str) -> Result<Vec<SearchResul
     }
 }
 
-fn search_photos_fts(
+pub fn search_photos_fts(
     conn: &Connection,
     query: &str,
     options: &SearchOptions,
@@ -453,7 +447,7 @@ fn search_photos_fts(
     }
 }
 
-fn search_documents_fts(
+pub fn search_documents_fts(
     conn: &Connection,
     query: &str,
     options: &SearchOptions,
@@ -523,7 +517,7 @@ fn search_documents_fts(
     }
 }
 
-fn search_reminders_fts(
+pub fn search_reminders_fts(
     conn: &Connection,
     query: &str,
     options: &SearchOptions,
@@ -954,7 +948,7 @@ mod tests {
 
             min_score: 0.0,
         };
-        let results = fts_search(&conn, "rust", &options).unwrap();
+        let results = fts_search(&conn, "rust", &options, &test_registry()).unwrap();
         assert!(!results.is_empty());
         assert!(results.iter().all(|r| r.result_type == "note"));
     }
@@ -974,7 +968,7 @@ mod tests {
 
             min_score: 0.0,
         };
-        let results = fts_search(&conn, "alice", &options).unwrap();
+        let results = fts_search(&conn, "alice", &options, &test_registry()).unwrap();
         assert!(!results.is_empty());
         assert!(results.iter().all(|r| r.result_type == "contact"));
     }
@@ -996,7 +990,7 @@ mod tests {
 
             min_score: 0.0,
         };
-        let results = fts_search(&conn, "rust", &options).unwrap();
+        let results = fts_search(&conn, "rust", &options, &test_registry()).unwrap();
         assert!(results.is_empty());
     }
 
@@ -1014,7 +1008,7 @@ mod tests {
 
             min_score: 0.0,
         };
-        let results = fts_search(&conn, "xyznonexistent", &options).unwrap();
+        let results = fts_search(&conn, "xyznonexistent", &options, &test_registry()).unwrap();
         assert!(results.is_empty());
     }
 }

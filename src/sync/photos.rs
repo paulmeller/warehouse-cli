@@ -4,6 +4,8 @@ use rusqlite::{params, Connection, OpenFlags};
 use crate::config::{self, Config};
 use crate::connector::Connector;
 use crate::db;
+use crate::search;
+use crate::sync::SyncContext;
 
 pub struct PhotosConnector;
 
@@ -20,8 +22,8 @@ impl Connector for PhotosConnector {
         create_tables(conn)
     }
 
-    fn extract(&self, conn: &Connection, config: &Config) -> Result<usize> {
-        extract(conn, config)
+    fn extract(&self, conn: &Connection, config: &Config, ctx: &SyncContext) -> Result<usize> {
+        extract(conn, config, ctx)
     }
 
     fn fts_schema_sql(&self) -> Option<&str> {
@@ -74,10 +76,41 @@ impl Connector for PhotosConnector {
         tx.commit()?;
         Ok(count)
     }
+
+    fn governance_description(&self) -> &str {
+        "Your Apple Photos library \u{2014} images, faces, people, locations."
+    }
+
+    fn governance_fields(&self) -> &[&str] {
+        &["title", "filename", "people", "location"]
+    }
+
+    fn search_types(&self) -> Vec<(&str, &str)> {
+        vec![("photo", "photos")]
+    }
+
+    fn search_fts(
+        &self,
+        conn: &Connection,
+        search_type: &str,
+        query: &str,
+        options: &search::SearchOptions,
+    ) -> Result<Vec<search::SearchResult>> {
+        if search_type == "photo" {
+            search::search_photos_fts(conn, query, options)
+        } else {
+            Ok(vec![])
+        }
+    }
+}
+
+/// Convert DateTime<Utc> to Apple seconds (for ZMODIFICATIONDATE, ZDATECREATED, ZADDEDDATE).
+fn to_apple_seconds(dt: &chrono::DateTime<chrono::Utc>) -> f64 {
+    (dt.timestamp() as f64) - 978307200.0
 }
 
 /// Extract Apple Photos metadata into warehouse.
-pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {
+pub fn extract(conn: &Connection, _config: &Config, ctx: &SyncContext) -> Result<usize> {
     let photos_db_path =
         config::get_photos_db_path().ok_or_else(|| anyhow::anyhow!("Photos database not found"))?;
 
@@ -87,14 +120,18 @@ pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {
     create_tables(conn)?;
 
     let tx = conn.unchecked_transaction()?;
-    tx.execute_batch(
-        "DELETE FROM photos_faces;
-         DELETE FROM photos_people;
-         DELETE FROM photos_albums;
-         DELETE FROM photos_assets;",
-    )?;
 
-    let assets = extract_assets(&src, &tx)?;
+    if !ctx.is_incremental() {
+        tx.execute_batch(
+            "DELETE FROM photos_faces;
+             DELETE FROM photos_people;
+             DELETE FROM photos_albums;
+             DELETE FROM photos_assets;",
+        )?;
+    }
+
+    let assets = extract_assets(&src, &tx, ctx)?;
+    // People, faces, albums: always full (small, no useful mod dates)
     let people = extract_people(&src, &tx)?;
     let faces = extract_faces(&src, &tx)?;
     let albums = extract_albums(&src, &tx)?;
@@ -189,13 +226,26 @@ fn create_tables(conn: &Connection) -> Result<()> {
 
 const APPLE_TS: &str = "978307200";
 
-fn extract_assets(src: &Connection, dst: &Connection) -> Result<usize> {
+fn extract_assets(src: &Connection, dst: &Connection, ctx: &SyncContext) -> Result<usize> {
     // Photos.sqlite schema: title is in ZADDITIONALASSETATTRIBUTES, EXIF in ZEXTENDEDATTRIBUTES
     // The join column between ZASSET and ZEXTENDEDATTRIBUTES varies by macOS version
     let ea_join = if has_column_in(src, "ZASSET", "ZEXTENDEDATTRIBUTES") {
         "LEFT JOIN ZEXTENDEDATTRIBUTES ea ON a.ZEXTENDEDATTRIBUTES = ea.Z_PK"
     } else {
         "LEFT JOIN ZEXTENDEDATTRIBUTES ea ON ea.ZASSET = a.Z_PK"
+    };
+
+    let where_clause = if ctx.is_incremental() {
+        if let Some(ref since) = ctx.since {
+            let apple_secs = to_apple_seconds(since);
+            format!(
+                "WHERE COALESCE(a.ZMODIFICATIONDATE, a.ZDATECREATED, a.ZADDEDDATE) > {apple_secs}"
+            )
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
     };
 
     let sql = format!(
@@ -234,7 +284,8 @@ fn extract_assets(src: &Connection, dst: &Connection) -> Result<usize> {
             aa.ZORIGINALFILESIZE
         FROM ZASSET a
         LEFT JOIN ZADDITIONALASSETATTRIBUTES aa ON a.ZADDITIONALATTRIBUTES = aa.Z_PK
-        {ea_join}"
+        {ea_join}
+        {where_clause}"
     );
 
     let mut stmt = src.prepare(&sql)?;

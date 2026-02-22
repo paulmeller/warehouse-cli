@@ -98,8 +98,9 @@ pub enum Commands {
     /// First-time setup (sync + index)
     Setup,
 
-    /// List available connectors (plugins)
-    Connectors,
+    /// Manage data source connectors
+    #[command(subcommand)]
+    Connector(ConnectorSubcommand),
 
     /// Manage data source permissions
     #[command(subcommand)]
@@ -129,10 +130,7 @@ pub struct SearchArgs {
     pub limit: usize,
 
     /// Filter by content type
-    #[arg(short = 't', long = "type", value_parser = [
-        "message", "note", "contact", "photo", "document",
-        "reminder"
-    ])]
+    #[arg(short = 't', long = "type")]
     pub types: Vec<String>,
 
     /// Start date (YYYY-MM-DD)
@@ -480,6 +478,36 @@ pub struct ScheduleLogsArgs {
     /// Number of log lines to show
     #[arg(short = 'n', long, default_value_t = 50)]
     pub lines: usize,
+}
+
+#[derive(Subcommand)]
+pub enum ConnectorSubcommand {
+    /// List all available connectors
+    List,
+    /// Install a connector from a URL
+    Add(ConnectorAddArgs),
+    /// Remove an installed connector
+    Remove(ConnectorRemoveArgs),
+    /// Show details about a connector
+    Info(ConnectorInfoArgs),
+}
+
+#[derive(Parser)]
+pub struct ConnectorAddArgs {
+    /// HTTPS URL to the connector JSON spec
+    pub url: String,
+}
+
+#[derive(Parser)]
+pub struct ConnectorRemoveArgs {
+    /// Connector name to remove
+    pub name: String,
+}
+
+#[derive(Parser)]
+pub struct ConnectorInfoArgs {
+    /// Connector name
+    pub name: String,
 }
 
 #[derive(Subcommand)]

@@ -4,6 +4,8 @@ use rusqlite::{params, Connection, OpenFlags};
 use crate::config::{self, Config};
 use crate::connector::Connector;
 use crate::db;
+use crate::search;
+use crate::sync::SyncContext;
 
 pub struct RemindersConnector;
 
@@ -20,8 +22,8 @@ impl Connector for RemindersConnector {
         create_tables(conn)
     }
 
-    fn extract(&self, conn: &Connection, config: &Config) -> Result<usize> {
-        extract(conn, config)
+    fn extract(&self, conn: &Connection, config: &Config, ctx: &SyncContext) -> Result<usize> {
+        extract(conn, config, ctx)
     }
 
     fn fts_schema_sql(&self) -> Option<&str> {
@@ -68,12 +70,43 @@ impl Connector for RemindersConnector {
         tx.commit()?;
         Ok(count)
     }
+
+    fn governance_description(&self) -> &str {
+        "Lists, due dates, and priorities."
+    }
+
+    fn governance_fields(&self) -> &[&str] {
+        &["title", "notes", "list_name", "location"]
+    }
+
+    fn search_types(&self) -> Vec<(&str, &str)> {
+        vec![("reminder", "reminders")]
+    }
+
+    fn search_fts(
+        &self,
+        conn: &Connection,
+        search_type: &str,
+        query: &str,
+        options: &search::SearchOptions,
+    ) -> Result<Vec<search::SearchResult>> {
+        if search_type == "reminder" {
+            search::search_reminders_fts(conn, query, options)
+        } else {
+            Ok(vec![])
+        }
+    }
 }
 
 const APPLE_TS: &str = "978307200";
 
+/// Convert DateTime<Utc> to Apple seconds (for ZLASTMODIFIEDDATE).
+fn to_apple_seconds(dt: &chrono::DateTime<chrono::Utc>) -> f64 {
+    (dt.timestamp() as f64) - 978307200.0
+}
+
 /// Extract Reminders from macOS SQLite databases into warehouse.
-pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {
+pub fn extract(conn: &Connection, _config: &Config, ctx: &SyncContext) -> Result<usize> {
     let dbs = config::discover_reminders_databases();
     if dbs.is_empty() {
         anyhow::bail!("Reminders databases not found");
@@ -82,10 +115,13 @@ pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {
     create_tables(conn)?;
 
     let tx = conn.unchecked_transaction()?;
-    tx.execute_batch(
-        "DELETE FROM reminders;
-         DELETE FROM reminder_lists;",
-    )?;
+
+    if !ctx.is_incremental() {
+        tx.execute_batch(
+            "DELETE FROM reminders;
+             DELETE FROM reminder_lists;",
+        )?;
+    }
 
     let mut total_reminders = 0;
     let mut total_lists = 0;
@@ -112,8 +148,9 @@ pub fn extract(conn: &Connection, _config: &Config) -> Result<usize> {
             continue;
         }
 
+        // Lists: always INSERT OR REPLACE without filtering
         let lists = extract_lists(&src, &tx)?;
-        let reminders = extract_reminders(&src, &tx)?;
+        let reminders = extract_reminders(&src, &tx, ctx)?;
         total_lists += lists;
         total_reminders += reminders;
     }
@@ -214,7 +251,7 @@ fn table_exists(conn: &Connection, name: &str) -> bool {
         > 0
 }
 
-fn extract_reminders(src: &Connection, dst: &Connection) -> Result<usize> {
+fn extract_reminders(src: &Connection, dst: &Connection, ctx: &SyncContext) -> Result<usize> {
     // Determine list table and name column
     let (list_table, list_name_col) = if table_exists(src, "ZREMCDBASELIST") {
         ("ZREMCDBASELIST", "ZNAME")
@@ -229,6 +266,17 @@ fn extract_reminders(src: &Connection, dst: &Connection) -> Result<usize> {
         "ZTITLE"
     } else {
         "ZTITLE1"
+    };
+
+    let incremental_filter = if ctx.is_incremental() {
+        if let Some(ref since) = ctx.since {
+            let apple_secs = to_apple_seconds(since);
+            format!(" AND (r.ZLASTMODIFIEDDATE IS NOT NULL AND r.ZLASTMODIFIEDDATE > {apple_secs})")
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
     };
 
     let sql = format!(
@@ -257,7 +305,7 @@ fn extract_reminders(src: &Connection, dst: &Connection) -> Result<usize> {
             c.{list_name_col}
          FROM ZREMCDREMINDER r
          LEFT JOIN {list_table} c ON r.ZLIST = c.Z_PK
-         WHERE r.ZMARKEDFORDELETION = 0 OR r.ZMARKEDFORDELETION IS NULL"
+         WHERE (r.ZMARKEDFORDELETION = 0 OR r.ZMARKEDFORDELETION IS NULL){incremental_filter}"
     );
 
     let mut stmt = src.prepare(&sql)?;

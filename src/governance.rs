@@ -1,43 +1,8 @@
 use std::collections::HashMap;
 
 use crate::config::{self, SourcePermission};
+use crate::connector::ConnectorRegistry;
 use crate::search::SearchResult;
-
-/// All known data source names.
-pub const ALL_SOURCES: &[&str] = &[
-    "messages",
-    "contacts",
-    "notes",
-    "documents",
-    "reminders",
-    "photos",
-];
-
-/// Known fields per data source (used for onboarding and validation).
-pub fn source_fields(source: &str) -> &'static [&'static str] {
-    match source {
-        "messages" => &["sender_name", "chat_name", "text"],
-        "contacts" => &["name", "email", "phone", "address"],
-        "notes" => &["title", "body", "tags", "frontmatter"],
-        "documents" => &["title", "filename", "content"],
-        "reminders" => &["title", "notes", "list_name", "location"],
-        "photos" => &["title", "filename", "people", "location"],
-        _ => &[],
-    }
-}
-
-/// Human-readable description for each data source.
-pub fn source_description(source: &str) -> &'static str {
-    match source {
-        "messages" => "Your full iMessage and SMS conversation history.",
-        "contacts" => "Names, emails, phone numbers, and addresses.",
-        "notes" => "Your Obsidian vault — notes, tags, and links.",
-        "documents" => "Text extracted from PDF, DOCX, XLSX, and PPTX files.",
-        "reminders" => "Lists, due dates, and priorities.",
-        "photos" => "Your Apple Photos library — images, faces, people, locations.",
-        _ => "Unknown data source.",
-    }
-}
 
 /// Check if a source is accessible based on permissions.
 pub fn is_source_allowed(source: &str) -> bool {
@@ -49,7 +14,6 @@ pub fn is_source_allowed(source: &str) -> bool {
 }
 
 /// Get allowed fields for a source. Returns None if all fields are allowed.
-#[allow(dead_code)]
 pub fn get_allowed_fields(source: &str) -> Option<Vec<String>> {
     let permissions = config::load_permissions();
     match permissions.get(source) {
@@ -59,7 +23,6 @@ pub fn get_allowed_fields(source: &str) -> Option<Vec<String>> {
 }
 
 /// Get max age in days for a source. Returns None if no limit.
-#[allow(dead_code)]
 pub fn get_max_age_days(source: &str) -> Option<u32> {
     let permissions = config::load_permissions();
     match permissions.get(source) {
@@ -78,46 +41,18 @@ pub fn get_source_permission(source: &str) -> SourcePermission {
 }
 
 /// Filter search types to only include permitted sources.
-pub fn filter_allowed_types(types: &[String]) -> Vec<String> {
+pub fn filter_allowed_types(types: &[String], registry: &ConnectorRegistry) -> Vec<String> {
     types
         .iter()
         .filter(|t| {
-            let source = search_type_to_source(t);
+            let source = registry.search_type_to_source(t).unwrap_or(t.as_str());
             is_source_allowed(source)
         })
         .cloned()
         .collect()
 }
 
-/// Map search result type names to source permission names.
-pub fn search_type_to_source(search_type: &str) -> &str {
-    match search_type {
-        "message" => "messages",
-        "note" => "notes",
-        "contact" => "contacts",
-        "photo" => "photos",
-        "document" => "documents",
-        "reminder" => "reminders",
-        _ => search_type,
-    }
-}
-
-/// Map source names to search type names.
-#[allow(dead_code)]
-pub fn source_to_search_type(source: &str) -> &str {
-    match source {
-        "messages" => "message",
-        "notes" => "note",
-        "contacts" => "contact",
-        "photos" => "photo",
-        "documents" => "document",
-        "reminders" => "reminder",
-        _ => source,
-    }
-}
-
 /// Check if a specific field is allowed for a source.
-#[allow(dead_code)]
 pub fn is_field_allowed(source: &str, field: &str) -> bool {
     match get_allowed_fields(source) {
         Some(fields) => fields.iter().any(|f| f == field),
@@ -129,6 +64,7 @@ pub fn is_field_allowed(source: &str, field: &str) -> bool {
 /// Returns the redacted results and a list of redacted fields per source.
 pub fn apply_field_redaction(
     results: Vec<SearchResult>,
+    registry: &ConnectorRegistry,
 ) -> (Vec<SearchResult>, HashMap<String, Vec<String>>) {
     let permissions = config::load_permissions();
     let mut redacted_fields: HashMap<String, Vec<String>> = HashMap::new();
@@ -136,7 +72,9 @@ pub fn apply_field_redaction(
     let filtered: Vec<SearchResult> = results
         .into_iter()
         .filter_map(|mut result| {
-            let source = search_type_to_source(&result.result_type);
+            let source = registry
+                .search_type_to_source(&result.result_type)
+                .unwrap_or(&result.result_type);
             let perm = match permissions.get(source) {
                 Some(p) if p.access => p,
                 _ => return None, // Source blocked entirely
@@ -212,7 +150,6 @@ fn metadata_key_to_field<'a>(source: &str, key: &'a str) -> &'a str {
 }
 
 /// Compute the cutoff date string for a max_age_days filter.
-#[allow(dead_code)]
 pub fn max_age_cutoff_date(days: u32) -> String {
     let cutoff = chrono::Local::now() - chrono::Duration::days(days as i64);
     cutoff.format("%Y-%m-%d").to_string()
@@ -246,12 +183,12 @@ pub fn format_source_summary(_source: &str, perm: &SourcePermission) -> String {
 }
 
 /// Print the current permissions summary.
-pub fn print_permissions_summary() {
+pub fn print_permissions_summary(registry: &ConnectorRegistry) {
     let permissions = config::load_permissions();
     println!("Current permissions:");
     println!();
-    for source in ALL_SOURCES {
-        let perm = permissions.get(*source).cloned().unwrap_or_default();
+    for source in registry.all_sources() {
+        let perm = permissions.get(source).cloned().unwrap_or_default();
         let icon = if perm.access { "\u{2713}" } else { "\u{2717}" };
         let summary = format_source_summary(source, &perm);
         println!("  {:<12} {}  {}", source, icon, summary);
@@ -262,32 +199,39 @@ pub fn print_permissions_summary() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_search_type_to_source() {
-        assert_eq!(search_type_to_source("message"), "messages");
-        assert_eq!(search_type_to_source("note"), "notes");
-        assert_eq!(search_type_to_source("contact"), "contacts");
-        assert_eq!(search_type_to_source("photo"), "photos");
-        assert_eq!(search_type_to_source("document"), "documents");
-        assert_eq!(search_type_to_source("reminder"), "reminders");
+    fn test_registry() -> ConnectorRegistry {
+        crate::connector::default_registry()
     }
 
     #[test]
-    fn test_source_to_search_type() {
-        assert_eq!(source_to_search_type("messages"), "message");
-        assert_eq!(source_to_search_type("notes"), "note");
+    fn test_search_type_to_source_via_registry() {
+        let registry = test_registry();
+        assert_eq!(registry.search_type_to_source("message"), Some("messages"));
+        assert_eq!(registry.search_type_to_source("note"), Some("notes"));
+        assert_eq!(registry.search_type_to_source("contact"), Some("contacts"));
+        assert_eq!(registry.search_type_to_source("photo"), Some("photos"));
+        assert_eq!(
+            registry.search_type_to_source("document"),
+            Some("documents")
+        );
+        assert_eq!(
+            registry.search_type_to_source("reminder"),
+            Some("reminders")
+        );
     }
 
     #[test]
-    fn test_source_fields_known() {
-        assert!(!source_fields("messages").is_empty());
-        assert!(!source_fields("contacts").is_empty());
-        assert!(!source_fields("notes").is_empty());
+    fn test_source_fields_via_registry() {
+        let registry = test_registry();
+        assert!(!registry.source_fields("messages").is_empty());
+        assert!(!registry.source_fields("contacts").is_empty());
+        assert!(!registry.source_fields("notes").is_empty());
     }
 
     #[test]
-    fn test_source_fields_unknown() {
-        assert!(source_fields("unknown_source").is_empty());
+    fn test_source_fields_unknown_via_registry() {
+        let registry = test_registry();
+        assert!(registry.source_fields("unknown_source").is_empty());
     }
 
     #[test]
@@ -339,6 +283,7 @@ mod tests {
 
     #[test]
     fn test_apply_field_redaction_blocked_source() {
+        let registry = test_registry();
         let results = vec![SearchResult {
             result_type: "message".into(),
             id: "1".into(),
@@ -348,15 +293,16 @@ mod tests {
             metadata: HashMap::new(),
         }];
         // With default permissions (all blocked), results should be empty
-        let (filtered, _) = apply_field_redaction(results);
+        let (filtered, _) = apply_field_redaction(results, &registry);
         // This depends on config state, so we just verify it doesn't panic
         assert!(filtered.len() <= 1);
     }
 
     #[test]
     fn test_filter_allowed_types_empty() {
+        let registry = test_registry();
         let types: Vec<String> = vec![];
-        let filtered = filter_allowed_types(&types);
+        let filtered = filter_allowed_types(&types, &registry);
         assert!(filtered.is_empty());
     }
 }

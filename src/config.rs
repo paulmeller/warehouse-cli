@@ -26,6 +26,10 @@ pub struct Config {
     pub settings: SettingsConfig,
     #[serde(default)]
     pub permissions: HashMap<String, SourcePermission>,
+    /// Catch-all for connector-specific config sections (e.g. [pocketsmith], [twitter]).
+    /// These are read by connectors via `auth::read_config_key()`, not by typed structs.
+    #[serde(flatten)]
+    pub extra: HashMap<String, toml::Value>,
 }
 
 /// Global settings for governance features.

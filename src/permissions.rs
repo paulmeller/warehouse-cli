@@ -3,10 +3,11 @@ use std::io::{self, BufRead, Write};
 use anyhow::Result;
 
 use crate::config::{self, SourcePermission};
+use crate::connector::ConnectorRegistry;
 use crate::governance;
 
 /// Run the interactive onboarding flow.
-pub fn run_onboarding() -> Result<()> {
+pub fn run_onboarding(registry: &ConnectorRegistry) -> Result<()> {
     let mut config = config::load_config();
 
     println!("Welcome to Warehouse.");
@@ -19,9 +20,9 @@ pub fn run_onboarding() -> Result<()> {
     );
     println!();
 
-    for source in governance::ALL_SOURCES {
-        let existing = config.permissions.get(*source).cloned();
-        let perm = prompt_source_permission(source, existing.as_ref())?;
+    for source in registry.all_sources() {
+        let existing = config.permissions.get(source).cloned();
+        let perm = prompt_source_permission(source, existing.as_ref(), registry)?;
         config.permissions.insert(source.to_string(), perm);
     }
 
@@ -29,8 +30,8 @@ pub fn run_onboarding() -> Result<()> {
     println!();
     println!("All done. Here's your configuration:");
     println!();
-    for source in governance::ALL_SOURCES {
-        if let Some(perm) = config.permissions.get(*source) {
+    for source in registry.all_sources() {
+        if let Some(perm) = config.permissions.get(source) {
             let icon = if perm.access { "\u{2713}" } else { "\u{2717}" };
             let summary = governance::format_source_summary(source, perm);
             println!("  {:<12} {}  {}", source, icon, summary);
@@ -62,8 +63,9 @@ pub fn run_onboarding() -> Result<()> {
 fn prompt_source_permission(
     source: &str,
     existing: Option<&SourcePermission>,
+    registry: &ConnectorRegistry,
 ) -> Result<SourcePermission> {
-    let description = governance::source_description(source);
+    let description = registry.source_description(source);
     let title = source[..1].to_uppercase() + &source[1..];
 
     println!(
@@ -102,7 +104,7 @@ fn prompt_source_permission(
                 });
             }
             "m" | "maybe" => {
-                return prompt_granular_permission(source, existing);
+                return prompt_granular_permission(source, existing, registry);
             }
             "" | "n" | "no" => {
                 return Ok(SourcePermission::default());
@@ -118,8 +120,9 @@ fn prompt_source_permission(
 fn prompt_granular_permission(
     source: &str,
     existing: Option<&SourcePermission>,
+    registry: &ConnectorRegistry,
 ) -> Result<SourcePermission> {
-    let fields = governance::source_fields(source);
+    let fields = registry.source_fields(source);
 
     // Field selection
     println!();
@@ -214,8 +217,8 @@ fn prompt_granular_permission(
 }
 
 /// Enable a specific source.
-pub fn enable_source(source: &str) -> Result<()> {
-    validate_source_name(source)?;
+pub fn enable_source(source: &str, registry: &ConnectorRegistry) -> Result<()> {
+    validate_source_name(source, registry)?;
     let mut config = config::load_config();
     let perm = config.permissions.entry(source.to_string()).or_default();
     perm.access = true;
@@ -225,8 +228,8 @@ pub fn enable_source(source: &str) -> Result<()> {
 }
 
 /// Disable a specific source.
-pub fn disable_source(source: &str) -> Result<()> {
-    validate_source_name(source)?;
+pub fn disable_source(source: &str, registry: &ConnectorRegistry) -> Result<()> {
+    validate_source_name(source, registry)?;
     let mut config = config::load_config();
     let perm = config.permissions.entry(source.to_string()).or_default();
     perm.access = false;
@@ -236,8 +239,8 @@ pub fn disable_source(source: &str) -> Result<()> {
 }
 
 /// Set fields for a source.
-pub fn set_fields(source: &str, fields_str: &str) -> Result<()> {
-    validate_source_name(source)?;
+pub fn set_fields(source: &str, fields_str: &str, registry: &ConnectorRegistry) -> Result<()> {
+    validate_source_name(source, registry)?;
     let mut config = config::load_config();
     let perm = config
         .permissions
@@ -252,11 +255,11 @@ pub fn set_fields(source: &str, fields_str: &str) -> Result<()> {
         perm.fields = None;
         println!("Set '{}' to all fields.", source);
     } else {
-        let known = governance::source_fields(source);
+        let known = registry.source_fields(source);
         let fields: Vec<String> = fields_str
             .split(',')
             .map(|s| s.trim().to_string())
-            .filter(|f| known.iter().any(|k| k == f) || !f.is_empty())
+            .filter(|f| known.contains(&f.as_str()) || !f.is_empty())
             .collect();
         println!("Set '{}' fields to: {}", source, fields.join(", "));
         perm.fields = Some(fields);
@@ -268,8 +271,8 @@ pub fn set_fields(source: &str, fields_str: &str) -> Result<()> {
 }
 
 /// Set max age for a source.
-pub fn set_max_age(source: &str, max_age: &str) -> Result<()> {
-    validate_source_name(source)?;
+pub fn set_max_age(source: &str, max_age: &str, registry: &ConnectorRegistry) -> Result<()> {
+    validate_source_name(source, registry)?;
     let mut config = config::load_config();
     let perm = config
         .permissions
@@ -320,14 +323,15 @@ pub fn reset_permissions() -> Result<()> {
 }
 
 /// Validate that a source name is known.
-fn validate_source_name(source: &str) -> Result<()> {
-    if governance::ALL_SOURCES.contains(&source) {
+fn validate_source_name(source: &str, registry: &ConnectorRegistry) -> Result<()> {
+    let all = registry.all_sources();
+    if all.contains(&source) {
         Ok(())
     } else {
         anyhow::bail!(
             "Unknown source '{}'. Available sources: {}",
             source,
-            governance::ALL_SOURCES.join(", ")
+            all.join(", ")
         )
     }
 }
@@ -336,19 +340,25 @@ fn validate_source_name(source: &str) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn test_registry() -> ConnectorRegistry {
+        crate::connector::default_registry()
+    }
+
     #[test]
     fn validate_known_sources() {
-        assert!(validate_source_name("messages").is_ok());
-        assert!(validate_source_name("contacts").is_ok());
-        assert!(validate_source_name("notes").is_ok());
-        assert!(validate_source_name("documents").is_ok());
-        assert!(validate_source_name("reminders").is_ok());
-        assert!(validate_source_name("photos").is_ok());
+        let registry = test_registry();
+        assert!(validate_source_name("messages", &registry).is_ok());
+        assert!(validate_source_name("contacts", &registry).is_ok());
+        assert!(validate_source_name("notes", &registry).is_ok());
+        assert!(validate_source_name("documents", &registry).is_ok());
+        assert!(validate_source_name("reminders", &registry).is_ok());
+        assert!(validate_source_name("photos", &registry).is_ok());
     }
 
     #[test]
     fn validate_unknown_source() {
-        assert!(validate_source_name("unknown").is_err());
-        assert!(validate_source_name("").is_err());
+        let registry = test_registry();
+        assert!(validate_source_name("unknown", &registry).is_err());
+        assert!(validate_source_name("", &registry).is_err());
     }
 }

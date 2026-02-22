@@ -1,10 +1,17 @@
+#[allow(dead_code)]
 mod audit;
+mod auth;
 mod browse;
 mod cli;
 mod config;
 mod connector;
+mod connector_mgmt;
+#[allow(dead_code)]
+mod cookies;
 mod db;
+mod dynamic_connector;
 mod fts;
+#[allow(dead_code)]
 mod governance;
 mod permissions;
 mod schedule;
@@ -41,7 +48,7 @@ fn main() -> Result<()> {
         Commands::Schedule(sub) => cmd_schedule(sub),
         Commands::Doctor => cmd_doctor(),
         Commands::Setup => cmd_setup(&db_path),
-        Commands::Connectors => cmd_connectors(),
+        Commands::Connector(sub) => cmd_connector(sub),
         Commands::Permissions(sub) => cmd_permissions(sub),
         Commands::Audit(args) => cmd_audit(args),
     }
@@ -75,48 +82,63 @@ fn cmd_index(db_path: &str) -> Result<()> {
 
 fn cmd_search(db_path: &str, args: cli::SearchArgs) -> Result<()> {
     let conn = db::open(db_path)?;
+    let registry = connector::default_registry();
 
+    // Validate and resolve search types
     let requested_types: Vec<String> = if args.types.is_empty() {
-        search::ALL_TYPES.iter().map(|s| s.to_string()).collect()
+        registry
+            .all_search_types()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     } else {
+        // Validate requested types at runtime
+        let valid_types = registry.all_search_types();
+        for t in &args.types {
+            if !valid_types.contains(&t.as_str()) {
+                anyhow::bail!(
+                    "Unknown search type '{}'. Available types: {}",
+                    t,
+                    valid_types.join(", ")
+                );
+            }
+        }
         args.types
     };
 
-    // Apply governance: filter out denied sources
-    let allowed_types = governance::filter_allowed_types(&requested_types);
-    let blocked_sources: Vec<String> = requested_types
-        .iter()
-        .filter(|t| !allowed_types.contains(t))
-        .map(|t| governance::search_type_to_source(t).to_string())
-        .collect();
-
+    // Build search options — permission checks happen inside fts_search per-connector
     let options = search::SearchOptions {
-        types: if allowed_types.is_empty() && !config::permissions_configured() {
-            // If no permissions configured yet, allow all (backward compat)
-            requested_types.clone()
-        } else {
-            allowed_types.clone()
-        },
+        types: requested_types.clone(),
         limit: args.limit,
         date_from: args.date_from,
         date_to: args.date_to,
         min_score: args.min_score,
     };
 
-    let results = search::fts_search(&conn, &args.query, &options)?;
+    let results = search::fts_search(&conn, &args.query, &options, &registry)?;
 
     // Apply field redaction
     let (results, redacted_fields) = if config::permissions_configured() {
-        governance::apply_field_redaction(results)
+        governance::apply_field_redaction(results, &registry)
     } else {
         (results, std::collections::HashMap::new())
     };
 
     // Log to audit trail
-    let queried_sources: Vec<String> = allowed_types
+    let queried_sources: Vec<String> = requested_types
         .iter()
-        .map(|t| governance::search_type_to_source(t).to_string())
+        .filter_map(|t| registry.search_type_to_source(t))
+        .map(|s| s.to_string())
         .collect();
+    let blocked_sources: Vec<String> = if config::permissions_configured() {
+        queried_sources
+            .iter()
+            .filter(|s| !governance::is_source_allowed(s))
+            .cloned()
+            .collect()
+    } else {
+        vec![]
+    };
     let _ = audit::log_search(
         &args.query,
         &queried_sources,
@@ -140,9 +162,11 @@ fn cmd_status(db_path: &str) -> Result<()> {
         return Ok(());
     }
     let conn = db::open(db_path)?;
+    let registry = connector::default_registry();
     println!("Database: {db_path}");
     println!();
 
+    // Built-in source tables
     let tables = [
         ("contacts", "contacts"),
         ("messages", "imessage_messages"),
@@ -160,20 +184,49 @@ fn cmd_status(db_path: &str) -> Result<()> {
         }
     }
 
+    // Dynamic connector source tables
+    for connector in registry.all() {
+        if connector.source() == "built-in"
+            && connector.name() != "contacts"
+            && connector.name() != "imessages"
+            && connector.name() != "obsidian"
+            && connector.name() != "photos"
+            && connector.name() != "documents"
+            && connector.name() != "reminders"
+        {
+            // This is a dynamic built-in connector - check its tables
+            let name = connector.name();
+            // Try common table patterns
+            let count = db::table_count(&conn, &format!("{}_transactions", name));
+            if count > 0 {
+                println!("  {name:20} {count:>10}");
+            }
+        }
+    }
+
     println!();
     println!("FTS indexes:");
-    let fts_tables = [
-        ("messages_fts", "messages"),
-        ("notes_fts", "notes"),
-        ("contacts_fts", "contacts"),
-        ("photos_fts", "photos"),
-        ("documents_fts", "documents"),
-        ("reminders_fts", "reminders"),
-    ];
-    for (table, label) in &fts_tables {
-        let count = db::table_count(&conn, table);
-        if count > 0 {
-            println!("  {label:20} {count:>10}");
+    // Collect FTS tables from all connectors
+    let mut seen_fts: Vec<String> = Vec::new();
+    for connector in registry.all() {
+        if let Some(fts_sql) = connector.fts_schema_sql() {
+            // Extract table names from FTS DDL
+            for line in fts_sql.lines() {
+                if line.contains("CREATE VIRTUAL TABLE") {
+                    if let Some(name) = line.split_whitespace().nth(5) {
+                        let name = name.trim();
+                        if !seen_fts.contains(&name.to_string()) {
+                            let count = db::table_count(&conn, name);
+                            if count > 0 {
+                                // Use connector governance source as label
+                                let label = connector.governance_source();
+                                println!("  {label:20} {count:>10}");
+                            }
+                            seen_fts.push(name.to_string());
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -318,9 +371,9 @@ fn cmd_sync(db_path: &str, args: cli::SyncArgs) -> Result<()> {
     let registry = connector::default_registry();
 
     let results = if args.sources.is_empty() {
-        sync::sync_all(&conn, &cfg, &registry)
+        sync::sync_all(&conn, &cfg, &registry, false)
     } else {
-        sync::sync_sources(&conn, &cfg, &args.sources, &registry)
+        sync::sync_sources(&conn, &cfg, &args.sources, &registry, false)
     };
 
     match args.format.as_str() {
@@ -397,6 +450,14 @@ fn cmd_doctor() -> Result<()> {
         None => println!("  Photos: not found"),
     }
 
+    // Reminders
+    let reminders = config::discover_reminders_databases();
+    if reminders.is_empty() {
+        println!("  Reminders: no databases found");
+    } else {
+        println!("  Reminders: {} database(s) (OK)", reminders.len());
+    }
+
     // Obsidian
     let vaults = config::discover_obsidian_vaults();
     if vaults.is_empty() {
@@ -405,14 +466,6 @@ fn cmd_doctor() -> Result<()> {
         for v in &vaults {
             println!("  Obsidian: {} (OK)", v.display());
         }
-    }
-
-    // Reminders
-    let reminders = config::discover_reminders_databases();
-    if reminders.is_empty() {
-        println!("  Reminders: no databases found");
-    } else {
-        println!("  Reminders: {} database(s) (OK)", reminders.len());
     }
 
     // Documents
@@ -473,7 +526,7 @@ fn cmd_setup(db_path: &str) -> Result<()> {
     let conn = db::open(db_path)?;
     let cfg = config::load_config();
     let registry = connector::default_registry();
-    let results = sync::sync_all(&conn, &cfg, &registry);
+    let results = sync::sync_all(&conn, &cfg, &registry, false);
     sync::print_summary(&results);
 
     // Step 4: Build FTS indexes
@@ -486,6 +539,50 @@ fn cmd_setup(db_path: &str) -> Result<()> {
         println!("  {name:12} {count:>10}");
     }
 
+    // Step 5: Offer to install popular API connectors
+    println!();
+    println!("Optional: install API connectors for cloud services.");
+    println!("These are downloaded from the warehouse-connectors gallery.");
+    println!();
+
+    let gallery_connectors = [
+        (
+            "pocketsmith",
+            "PocketSmith — accounts, categories, transactions",
+        ),
+        ("monarch", "Monarch Money — accounts, transactions, budgets"),
+        ("twitter", "Twitter/X — bookmarks and likes"),
+        ("notion", "Notion — pages and databases"),
+    ];
+
+    let gallery_base =
+        "https://raw.githubusercontent.com/paulmeller/warehouse-connectors/main/connectors";
+
+    for (name, description) in &gallery_connectors {
+        // Skip if already installed
+        let installed_path = dynamic_connector::connectors_dir().join(format!("{name}.json"));
+        if installed_path.exists() {
+            println!("  {description} [already installed]");
+            continue;
+        }
+
+        print!("  Install {description}? [y/N] ");
+        use std::io::Write;
+        std::io::stdout().flush()?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+
+        if input == "y" || input == "yes" {
+            let url = format!("{gallery_base}/{name}.json");
+            match connector_mgmt::cmd_connector_add(&url) {
+                Ok(()) => {}
+                Err(e) => eprintln!("  Warning: Failed to install {name}: {e}"),
+            }
+        }
+    }
+
     println!();
     println!("Setup complete! Try:");
     println!("  warehouse search \"your query\"");
@@ -494,40 +591,33 @@ fn cmd_setup(db_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_connectors() -> Result<()> {
-    let registry = connector::default_registry();
-    println!("Available connectors:");
-    println!();
-    for c in registry.all() {
-        let fts = if c.fts_schema_sql().is_some() {
-            "search"
-        } else {
-            "sync only"
-        };
-        println!("  {:<15} {} [{}]", c.name(), c.description(), fts);
+fn cmd_connector(sub: cli::ConnectorSubcommand) -> Result<()> {
+    match sub {
+        cli::ConnectorSubcommand::List => connector_mgmt::cmd_connector_list(),
+        cli::ConnectorSubcommand::Add(args) => connector_mgmt::cmd_connector_add(&args.url),
+        cli::ConnectorSubcommand::Remove(args) => connector_mgmt::cmd_connector_remove(&args.name),
+        cli::ConnectorSubcommand::Info(args) => connector_mgmt::cmd_connector_info(&args.name),
     }
-    println!();
-    println!("{} connector(s) registered", registry.all().len());
-    Ok(())
 }
 
 fn cmd_permissions(sub: cli::PermissionsSubcommand) -> Result<()> {
+    let registry = connector::default_registry();
     match sub {
         cli::PermissionsSubcommand::Show => {
-            governance::print_permissions_summary();
+            governance::print_permissions_summary(&registry);
         }
         cli::PermissionsSubcommand::Enable(args) => {
-            permissions::enable_source(&args.source)?;
+            permissions::enable_source(&args.source, &registry)?;
         }
         cli::PermissionsSubcommand::Disable(args) => {
-            permissions::disable_source(&args.source)?;
+            permissions::disable_source(&args.source, &registry)?;
         }
         cli::PermissionsSubcommand::Set(args) => {
             if let Some(ref fields) = args.fields {
-                permissions::set_fields(&args.source, fields)?;
+                permissions::set_fields(&args.source, fields, &registry)?;
             }
             if let Some(ref max_age) = args.max_age {
-                permissions::set_max_age(&args.source, max_age)?;
+                permissions::set_max_age(&args.source, max_age, &registry)?;
             }
             if args.fields.is_none() && args.max_age.is_none() {
                 anyhow::bail!("Specify --fields or --max-age. Example:\n  warehouse permissions set contacts --fields name,email\n  warehouse permissions set notes --max-age 90");
@@ -537,7 +627,7 @@ fn cmd_permissions(sub: cli::PermissionsSubcommand) -> Result<()> {
             permissions::reset_permissions()?;
         }
         cli::PermissionsSubcommand::Setup => {
-            permissions::run_onboarding()?;
+            permissions::run_onboarding(&registry)?;
         }
     }
     Ok(())
@@ -545,7 +635,8 @@ fn cmd_permissions(sub: cli::PermissionsSubcommand) -> Result<()> {
 
 fn cmd_audit(args: cli::AuditArgs) -> Result<()> {
     let days = if args.week { 7 } else { args.days.unwrap_or(7) };
+    let registry = connector::default_registry();
 
-    audit::print_digest(days, args.source.as_deref(), args.blocked)?;
+    audit::print_digest(days, args.source.as_deref(), args.blocked, &registry)?;
     Ok(())
 }

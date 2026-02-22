@@ -41,7 +41,6 @@ fn init_audit_schema(conn: &Connection) -> Result<()> {
 }
 
 /// Log a query to the audit trail.
-#[allow(dead_code)]
 pub fn log_query(
     source: &str,
     query: Option<&str>,
@@ -108,7 +107,6 @@ pub fn log_search(
 }
 
 /// Audit digest entry for a source.
-#[allow(dead_code)]
 struct DigestEntry {
     source: String,
     query_count: i64,
@@ -118,7 +116,12 @@ struct DigestEntry {
 }
 
 /// Print audit digest for the last N days.
-pub fn print_digest(days: u32, source_filter: Option<&str>, blocked_only: bool) -> Result<()> {
+pub fn print_digest(
+    days: u32,
+    source_filter: Option<&str>,
+    blocked_only: bool,
+    registry: &crate::connector::ConnectorRegistry,
+) -> Result<()> {
     let conn = open_audit_db()?;
 
     let cutoff = chrono::Local::now() - chrono::Duration::days(days as i64);
@@ -191,8 +194,8 @@ pub fn print_digest(days: u32, source_filter: Option<&str>, blocked_only: bool) 
 
     // Show sources with no queries
     let queried_sources: Vec<&str> = entries.iter().map(|e| e.source.as_str()).collect();
-    for source in crate::governance::ALL_SOURCES {
-        if !queried_sources.contains(source) {
+    for source in registry.all_sources() {
+        if !queried_sources.contains(&source) {
             let perm = crate::governance::get_source_permission(source);
             if !perm.access {
                 println!(
@@ -292,7 +295,6 @@ fn print_source_detail(conn: &Connection, source: &str, cutoff: &str) -> Result<
 }
 
 /// Clean up old audit entries based on retention policy.
-#[allow(dead_code)]
 pub fn cleanup_audit(retention_days: u32) -> Result<usize> {
     let conn = open_audit_db()?;
     let cutoff = chrono::Local::now() - chrono::Duration::days(retention_days as i64);
