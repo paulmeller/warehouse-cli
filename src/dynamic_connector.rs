@@ -1303,8 +1303,9 @@ impl DynamicConnector {
                     save_cursor_on_error(conn, ctx, &table.name, &cursor, page, total);
                     break;
                 }
+                let error_body = resp.text().unwrap_or_default();
                 save_cursor_on_error(conn, ctx, &table.name, &cursor, page, total);
-                anyhow::bail!("API error: HTTP {status} from {url}");
+                anyhow::bail!("API error: HTTP {status} from {url}\n  {error_body}");
             }
 
             let resp_body: serde_json::Value = match resp.json() {
@@ -1569,8 +1570,9 @@ impl DynamicConnector {
                     save_cursor_on_error(conn, ctx, &table.name, &cursor, page, total);
                     break;
                 }
+                let error_body = resp.text().unwrap_or_default();
                 save_cursor_on_error(conn, ctx, &table.name, &cursor, page, total);
-                anyhow::bail!("GraphQL error: HTTP {status}");
+                anyhow::bail!("GraphQL error: HTTP {status}\n  {error_body}");
             }
 
             let body: serde_json::Value = match resp.json() {
