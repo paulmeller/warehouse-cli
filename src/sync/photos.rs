@@ -411,6 +411,25 @@ fn extract_faces(src: &Connection, dst: &Connection) -> Result<usize> {
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
     )?;
 
+    // Check if referenced asset/person exist in warehouse before inserting,
+    // since incremental asset syncs may not have all assets yet.
+    let asset_exists = |id: i64| -> bool {
+        dst.query_row(
+            "SELECT 1 FROM photos_assets WHERE asset_id = ?1",
+            params![id],
+            |_| Ok(()),
+        )
+        .is_ok()
+    };
+    let person_exists = |id: i64| -> bool {
+        dst.query_row(
+            "SELECT 1 FROM photos_people WHERE person_id = ?1",
+            params![id],
+            |_| Ok(()),
+        )
+        .is_ok()
+    };
+
     let mut count = 0;
     let rows = stmt.query_map([], |row| {
         Ok((
@@ -431,6 +450,17 @@ fn extract_faces(src: &Connection, dst: &Connection) -> Result<usize> {
 
     for row in rows {
         let r = row?;
+        // Skip faces referencing assets or people not yet in warehouse
+        if let Some(aid) = r.1 {
+            if !asset_exists(aid) {
+                continue;
+            }
+        }
+        if let Some(pid) = r.2 {
+            if !person_exists(pid) {
+                continue;
+            }
+        }
         insert.execute(params![
             r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7, r.8, r.9, r.10, r.11
         ])?;
