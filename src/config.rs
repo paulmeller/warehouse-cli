@@ -490,11 +490,13 @@ pub fn print_discovered_sources() {
     println!("  - {}", get_warehouse_db_path());
 }
 
+#[cfg(target_os = "macos")]
 #[allow(dead_code)]
 /// Apple epoch offset: seconds between Unix epoch (1970) and Apple epoch (2001).
 pub const APPLE_EPOCH_OFFSET: i64 = 978307200;
 
 /// Convert Apple Core Data timestamp to ISO string.
+#[cfg(target_os = "macos")]
 #[allow(dead_code)]
 pub fn apple_timestamp_to_iso(timestamp: f64) -> Option<String> {
     if timestamp == 0.0 {
@@ -517,11 +519,13 @@ mod tests {
 
     // ========== apple_timestamp_to_iso ==========
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn apple_timestamp_zero_returns_none() {
         assert_eq!(apple_timestamp_to_iso(0.0), None);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn apple_timestamp_known_value() {
         // Apple epoch 0 = 2001-01-01T00:00:00 UTC
@@ -532,6 +536,7 @@ mod tests {
         assert_eq!(result, "2024-01-01T00:00:00");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn apple_timestamp_nanosecond_format() {
         // Same timestamp in nanoseconds: 725760000 * 1e9

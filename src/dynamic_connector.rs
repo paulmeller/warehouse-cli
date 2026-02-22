@@ -391,11 +391,11 @@ fn validate_default(value: &str) -> Result<()> {
         || v == "NULL"
         || v.parse::<i64>().is_ok()
         || v.parse::<f64>().is_ok()
-        || (v.starts_with('\'') && v.ends_with('\'') && !v[1..v.len() - 1].contains('\''));
+        || (v.starts_with('\'')
+            && v.ends_with('\'')
+            && !v[1..v.len() - 1].contains('\''));
     if !safe {
-        anyhow::bail!(
-            "Unsafe DEFAULT value: '{v}'. Allowed: CURRENT_TIMESTAMP, NULL, numbers, 'string'"
-        );
+        anyhow::bail!("Unsafe DEFAULT value: '{v}'. Allowed: CURRENT_TIMESTAMP, NULL, numbers, 'string'");
     }
     Ok(())
 }
@@ -834,7 +834,9 @@ fn resolve_date_template(key: &str) -> String {
             } else {
                 chrono::NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1)
             };
-            let end = next_month_first.and_then(|d| d.pred_opt()).unwrap_or(today);
+            let end = next_month_first
+                .and_then(|d| d.pred_opt())
+                .unwrap_or(today);
             end.format("%Y-%m-%d").to_string()
         }
         "year_month" => today.format("%Y-%m").to_string(),
@@ -915,13 +917,22 @@ fn resolve_auth(
             header_name,
             header_prefix,
         } => {
-            let token = auth::extract_safari_token(origin_marker, localstorage_key, token_path)?;
-            let value = if header_prefix.is_empty() {
-                token
-            } else {
-                format!("{header_prefix} {token}")
-            };
-            headers.insert(header_name.clone(), value);
+            #[cfg(target_os = "macos")]
+            {
+                let token =
+                    auth::extract_safari_token(origin_marker, localstorage_key, token_path)?;
+                let value = if header_prefix.is_empty() {
+                    token
+                } else {
+                    format!("{header_prefix} {token}")
+                };
+                headers.insert(header_name.clone(), value);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (origin_marker, localstorage_key, token_path, header_name, header_prefix);
+                anyhow::bail!("Safari localStorage auth is only available on macOS");
+            }
         }
         AuthSpec::TokenChain {
             cache_file,
@@ -993,7 +1004,17 @@ fn resolve_token_chain(
                 origin_marker,
                 localstorage_key,
                 token_path,
-            } => auth::extract_safari_token(origin_marker, localstorage_key, token_path).ok(),
+            } => {
+                #[cfg(target_os = "macos")]
+                {
+                    auth::extract_safari_token(origin_marker, localstorage_key, token_path).ok()
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = (origin_marker, localstorage_key, token_path);
+                    None
+                }
+            }
         };
 
         if let Some(token) = token {

@@ -1,8 +1,12 @@
+#[cfg(target_os = "macos")]
 pub mod contacts;
 pub mod documents;
+#[cfg(target_os = "macos")]
 pub mod messages;
 pub mod notes;
+#[cfg(target_os = "macos")]
 pub mod photos;
+#[cfg(target_os = "macos")]
 pub mod reminders;
 
 use chrono::{DateTime, Duration, Utc};

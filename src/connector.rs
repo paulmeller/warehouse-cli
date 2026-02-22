@@ -3,7 +3,9 @@ use rusqlite::Connection;
 
 use crate::config::Config;
 use crate::search;
-use crate::sync::{contacts, documents, messages, notes, photos, reminders, SyncContext};
+#[cfg(target_os = "macos")]
+use crate::sync::{contacts, messages, photos, reminders};
+use crate::sync::{documents, notes, SyncContext};
 
 /// Trait that all data source connectors must implement.
 ///
@@ -180,10 +182,16 @@ impl ConnectorRegistry {
 pub fn default_registry() -> ConnectorRegistry {
     let mut registry = ConnectorRegistry::new();
 
-    registry.register(Box::new(contacts::ContactsConnector));
-    registry.register(Box::new(messages::MessagesConnector));
-    registry.register(Box::new(photos::PhotosConnector));
-    registry.register(Box::new(reminders::RemindersConnector));
+    // Built-in connectors: macOS-only data sources
+    #[cfg(target_os = "macos")]
+    {
+        registry.register(Box::new(contacts::ContactsConnector));
+        registry.register(Box::new(messages::MessagesConnector));
+        registry.register(Box::new(photos::PhotosConnector));
+        registry.register(Box::new(reminders::RemindersConnector));
+    }
+
+    // Built-in connectors: cross-platform
     registry.register(Box::new(notes::NotesConnector));
     registry.register(Box::new(documents::DocumentsConnector));
 

@@ -88,7 +88,7 @@ pub enum Commands {
     /// Sync data from all or specific sources
     Sync(SyncArgs),
 
-    /// Manage sync schedule (LaunchAgent)
+    /// Manage sync schedule (LaunchAgent/Task Scheduler/systemd)
     #[command(subcommand)]
     Schedule(ScheduleSubcommand),
 
@@ -444,6 +444,14 @@ pub struct ShowArgs {
 pub struct SyncArgs {
     /// Specific sources to sync (e.g., contacts photos imessages)
     pub sources: Vec<String>,
+
+    /// Force full re-sync, ignoring last sync timestamp
+    #[arg(long)]
+    pub full: bool,
+
+    /// Show recent sync history instead of syncing
+    #[arg(long)]
+    pub history: bool,
 
     /// Output format
     #[arg(long, default_value = "text", value_parser = ["text", "json"])]

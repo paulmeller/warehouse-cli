@@ -367,13 +367,72 @@ fn cmd_sync(db_path: &str, args: cli::SyncArgs) -> Result<()> {
     }
 
     let conn = db::open(db_path)?;
+
+    // Handle --history flag
+    if args.history {
+        let runs = db::get_sync_history(&conn, 20)?;
+        if runs.is_empty() {
+            println!("No sync history found.");
+            return Ok(());
+        }
+
+        match args.format.as_str() {
+            "json" => {
+                let json_runs: Vec<serde_json::Value> = runs
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "id": r.id,
+                            "connector": r.connector_name,
+                            "started_at": r.started_at,
+                            "ended_at": r.ended_at,
+                            "status": r.status,
+                            "rows_synced": r.rows_synced,
+                            "error_message": r.error_message,
+                            "sync_mode": r.sync_mode,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&json_runs)?);
+            }
+            _ => {
+                println!(
+                    "{:<4} {:<16} {:<13} {:<8} {:>8} {:<25}",
+                    "ID", "Connector", "Mode", "Status", "Rows", "Started"
+                );
+                println!("{}", "-".repeat(78));
+                for r in &runs {
+                    // Truncate started_at to just date+time
+                    let started = if r.started_at.len() > 19 {
+                        &r.started_at[..19]
+                    } else {
+                        &r.started_at
+                    };
+                    println!(
+                        "{:<4} {:<16} {:<13} {:<8} {:>8} {:<25}",
+                        r.id, r.connector_name, r.sync_mode, r.status, r.rows_synced, started
+                    );
+                    if let Some(ref err) = r.error_message {
+                        let truncated = if err.len() > 70 {
+                            format!("{}...", &err[..67])
+                        } else {
+                            err.clone()
+                        };
+                        println!("     error: {truncated}");
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let cfg = config::load_config();
     let registry = connector::default_registry();
 
     let results = if args.sources.is_empty() {
-        sync::sync_all(&conn, &cfg, &registry, false)
+        sync::sync_all(&conn, &cfg, &registry, args.full)
     } else {
-        sync::sync_sources(&conn, &cfg, &args.sources, &registry, false)
+        sync::sync_sources(&conn, &cfg, &args.sources, &registry, args.full)
     };
 
     match args.format.as_str() {
@@ -438,25 +497,31 @@ fn cmd_doctor() -> Result<()> {
     println!();
     println!("Data sources:");
 
-    // iMessages
-    match config::get_imessages_db_path() {
-        Some(p) => println!("  iMessages: {} (OK)", p.display()),
-        None => println!("  iMessages: not found (requires Full Disk Access)"),
+    // macOS-only data sources
+    #[cfg(target_os = "macos")]
+    {
+        // iMessages
+        match config::get_imessages_db_path() {
+            Some(p) => println!("  iMessages: {} (OK)", p.display()),
+            None => println!("  iMessages: not found (requires Full Disk Access)"),
+        }
+
+        // Photos
+        match config::get_photos_db_path() {
+            Some(p) => println!("  Photos: {} (OK)", p.display()),
+            None => println!("  Photos: not found"),
+        }
+
+        // Reminders
+        let reminders = config::discover_reminders_databases();
+        if reminders.is_empty() {
+            println!("  Reminders: no databases found");
+        } else {
+            println!("  Reminders: {} database(s) (OK)", reminders.len());
+        }
     }
 
-    // Photos
-    match config::get_photos_db_path() {
-        Some(p) => println!("  Photos: {} (OK)", p.display()),
-        None => println!("  Photos: not found"),
-    }
-
-    // Reminders
-    let reminders = config::discover_reminders_databases();
-    if reminders.is_empty() {
-        println!("  Reminders: no databases found");
-    } else {
-        println!("  Reminders: {} database(s) (OK)", reminders.len());
-    }
+    // Cross-platform data sources
 
     // Obsidian
     let vaults = config::discover_obsidian_vaults();
@@ -546,10 +611,7 @@ fn cmd_setup(db_path: &str) -> Result<()> {
     println!();
 
     let gallery_connectors = [
-        (
-            "pocketsmith",
-            "PocketSmith — accounts, categories, transactions",
-        ),
+        ("pocketsmith", "PocketSmith — accounts, categories, transactions"),
         ("monarch", "Monarch Money — accounts, transactions, budgets"),
         ("twitter", "Twitter/X — bookmarks and likes"),
         ("notion", "Notion — pages and databases"),

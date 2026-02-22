@@ -40,16 +40,17 @@ reqwest = { version = "0.12", features = ["json", "blocking"] }
 # Browser cookie temp files (Firefox cross-platform)
 tempfile = "3"
 
-# Chromium cookie decryption (Keychain + AES-CBC)
-aes = "0.8"
-cbc = { version = "0.1", features = ["alloc"] }
-pbkdf2 = { version = "0.12", features = ["hmac"] }
-sha1 = "0.10"
-
 # Misc
 dirs = "6"
 anyhow = "1"
 regex = "1"
+
+# macOS-only: Chromium cookie decryption (Keychain + AES-CBC)
+[target.'cfg(target_os = "macos")'.dependencies]
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+pbkdf2 = { version = "0.12", features = ["hmac"] }
+sha1 = "0.10"
 
 [profile.release]
 opt-level = 3

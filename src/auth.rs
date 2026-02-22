@@ -61,6 +61,7 @@ pub fn delete_cached_token(name: &str) {
 ///
 /// Safari stores localStorage in SQLite databases under:
 /// ~/Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteData/Default/
+#[cfg(target_os = "macos")]
 pub fn find_safari_localstorage(origin_marker: &str) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let base =
@@ -114,6 +115,7 @@ pub fn find_safari_localstorage(origin_marker: &str) -> Option<PathBuf> {
 
 /// Read a value from a Safari localStorage SQLite database.
 /// Safari stores values as UTF-16LE encoded bytes.
+#[cfg(target_os = "macos")]
 pub fn read_localstorage_value(db_path: &PathBuf, key: &str) -> Result<String> {
     let conn =
         rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
@@ -142,6 +144,7 @@ pub fn read_localstorage_value(db_path: &PathBuf, key: &str) -> Result<String> {
 /// 1. Read persist:root from localStorage (JSON)
 /// 2. Get the "user" field (which is itself a JSON string)
 /// 3. Parse it and get the "token" field
+#[cfg(target_os = "macos")]
 pub fn extract_safari_token(
     origin_marker: &str,
     localstorage_key: &str,

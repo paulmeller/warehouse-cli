@@ -22,6 +22,7 @@ pub fn scoop_cookies(domains: &[&str]) -> Vec<(String, Vec<Cookie>)> {
     let mut results = Vec::new();
 
     // Chromium-based browsers (macOS only for now — Windows DPAPI not yet implemented)
+    #[cfg(target_os = "macos")]
     {
         let chromium_browsers: &[(&str, &str, &str)] = &[
             ("Chrome", "Google/Chrome", "Chrome Safe Storage"),
@@ -52,6 +53,7 @@ pub fn scoop_cookies(domains: &[&str]) -> Vec<(String, Vec<Cookie>)> {
     }
 
     // Safari (macOS only)
+    #[cfg(target_os = "macos")]
     match read_safari_cookies(domains) {
         Ok(cookies) if !cookies.is_empty() => {
             results.push(("Safari".to_string(), cookies));
@@ -77,6 +79,7 @@ pub fn find_cookie<'a>(
 
 // ========== Chromium-based browsers (macOS) ==========
 
+#[cfg(target_os = "macos")]
 fn chromium_cookies_path(dir_name: &str) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let base = home.join("Library/Application Support").join(dir_name);
@@ -91,6 +94,7 @@ fn chromium_cookies_path(dir_name: &str) -> Option<PathBuf> {
     None
 }
 
+#[cfg(target_os = "macos")]
 fn get_keychain_password(service: &str) -> Result<String> {
     let output = std::process::Command::new("/usr/bin/security")
         .args(["find-generic-password", "-w", "-s", service, "-a", service])
@@ -119,6 +123,7 @@ fn get_keychain_password(service: &str) -> Result<String> {
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
 
+#[cfg(target_os = "macos")]
 fn derive_chromium_key(password: &str) -> Result<Vec<u8>> {
     use pbkdf2::pbkdf2_hmac;
     use sha1::Sha1;
@@ -130,6 +135,7 @@ fn derive_chromium_key(password: &str) -> Result<Vec<u8>> {
     Ok(key)
 }
 
+#[cfg(target_os = "macos")]
 fn decrypt_chromium_value(encrypted: &[u8], key: &[u8]) -> Option<String> {
     use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
 
@@ -150,6 +156,7 @@ fn decrypt_chromium_value(encrypted: &[u8], key: &[u8]) -> Option<String> {
     String::from_utf8(plaintext.to_vec()).ok()
 }
 
+#[cfg(target_os = "macos")]
 fn read_chromium_cookies(
     dir_name: &str,
     keychain_service: &str,
@@ -178,10 +185,8 @@ fn read_chromium_cookies(
     let where_clause = placeholders.join(" OR ");
     let sql = format!("SELECT name, encrypted_value, host_key FROM cookies WHERE {where_clause}");
     let params: Vec<String> = domains.iter().map(|d| format!("%{d}")).collect();
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
-        .iter()
-        .map(|p| p as &dyn rusqlite::types::ToSql)
-        .collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        params.iter().map(|p| p as &dyn rusqlite::types::ToSql).collect();
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(param_refs.as_slice(), |row| {
@@ -283,10 +288,8 @@ fn read_firefox_cookies(domains: &[&str]) -> Result<Vec<Cookie>> {
     let where_clause = placeholders.join(" OR ");
     let sql = format!("SELECT name, value, host FROM moz_cookies WHERE {where_clause}");
     let params: Vec<String> = domains.iter().map(|d| format!("%{d}")).collect();
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
-        .iter()
-        .map(|p| p as &dyn rusqlite::types::ToSql)
-        .collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        params.iter().map(|p| p as &dyn rusqlite::types::ToSql).collect();
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(param_refs.as_slice(), |row| {
@@ -302,6 +305,7 @@ fn read_firefox_cookies(domains: &[&str]) -> Result<Vec<Cookie>> {
 
 // ========== Safari (macOS only) ==========
 
+#[cfg(target_os = "macos")]
 fn read_safari_cookies(domains: &[&str]) -> Result<Vec<Cookie>> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?;
 
@@ -325,6 +329,7 @@ fn read_safari_cookies(domains: &[&str]) -> Result<Vec<Cookie>> {
     parse_safari_binary_cookies(&data, domains)
 }
 
+#[cfg(target_os = "macos")]
 fn parse_safari_binary_cookies(data: &[u8], domains: &[&str]) -> Result<Vec<Cookie>> {
     if data.len() < 8 || &data[0..4] != b"cook" {
         anyhow::bail!("Not a valid Safari cookies file");
@@ -367,6 +372,7 @@ fn parse_safari_binary_cookies(data: &[u8], domains: &[&str]) -> Result<Vec<Cook
     Ok(cookies)
 }
 
+#[cfg(target_os = "macos")]
 fn parse_safari_page(page: &[u8], domains: &[&str]) -> Result<Vec<Cookie>> {
     if page.len() < 8 {
         anyhow::bail!("Page too small");
