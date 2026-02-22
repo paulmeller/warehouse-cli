@@ -1,17 +1,17 @@
-# Connector Format Comparison: Warehouse vs Airbyte vs Fivetran
+# Connector Format Comparison: Warehouse vs Airbyte vs Fivetran vs n8n
 
-This document compares Warehouse's JSON connector spec format with the connector protocols used by Airbyte and Fivetran.
+This document compares Warehouse's JSON connector spec format with the connector protocols used by Airbyte, Fivetran, and n8n.
 
 ## Overview
 
-| Aspect | Warehouse | Airbyte | Fivetran |
-|--------|-----------|---------|----------|
-| **Connector definition** | Declarative JSON spec file | Imperative code in Docker container | Imperative Python code |
-| **Runtime** | Single Rust binary parses JSON | Docker container per connector | Python process via gRPC |
-| **Data transport** | Direct SQLite writes | Line-delimited JSON on STDOUT | gRPC stream |
-| **Schema declaration** | In-spec `tables[].columns` | JSONSchema via `discover` command | `schema()` function return value |
-| **Incremental sync** | Pagination early-stop + soft delete | Cursor-based STATE messages | State dict with cursors + checkpoints |
-| **Target** | Local SQLite + FTS5 | Any destination connector | Fivetran-managed warehouse |
+| Aspect | Warehouse | Airbyte | Fivetran | n8n |
+|--------|-----------|---------|----------|-----|
+| **Connector definition** | Declarative JSON spec file | Imperative code in Docker container | Imperative Python code | Declarative `routing` or imperative `execute()` (TypeScript) |
+| **Runtime** | Single Rust binary parses JSON | Docker container per connector | Python process via gRPC | Node.js workflow engine |
+| **Data transport** | Direct SQLite writes | Line-delimited JSON on STDOUT | gRPC stream | In-memory item arrays between nodes |
+| **Schema declaration** | In-spec `tables[].columns` | JSONSchema via `discover` command | `schema()` function return value | Implicit (no formal schema) |
+| **Incremental sync** | Pagination early-stop + soft delete | Cursor-based STATE messages | State dict with cursors + checkpoints | Workflow-level (external state management) |
+| **Target** | Local SQLite + FTS5 | Any destination connector | Fivetran-managed warehouse | Any node (400+ integrations) |
 
 ## Architecture Comparison
 
@@ -137,19 +137,96 @@ connector = Connector(update=update, schema=schema)
 
 The SDK handles gRPC serialization, checkpointing durability, and delivery to the Fivetran-managed destination warehouse.
 
+### n8n: Declarative Routing or Programmatic Execute
+
+n8n offers **two node-building styles**. For standard REST APIs, the recommended approach is **declarative** — you define a TypeScript class with a `routing` configuration instead of writing an `execute()` method. n8n's runtime automatically builds and sends HTTP requests based on the routing config:
+
+```typescript
+export class NasaPics implements INodeType {
+  description: INodeTypeDescription = {
+    displayName: 'NASA Pics',
+    name: 'nasaPics',
+    group: ['transform'],
+    version: 1,
+    inputs: [NodeConnectionType.Main],
+    outputs: [NodeConnectionType.Main],
+    credentials: [{ name: 'nasaPicsApi', required: true }],
+
+    // Base request config — declarative
+    requestDefaults: {
+      baseURL: 'https://api.nasa.gov',
+      headers: { Accept: 'application/json' },
+    },
+
+    properties: [
+      {
+        displayName: 'Resource',
+        name: 'resource',
+        type: 'options',
+        options: [
+          { name: 'Astronomy Picture of the Day', value: 'apod' },
+          { name: 'Mars Rover Photos', value: 'marsRoverPhotos' },
+        ],
+        default: 'apod',
+      },
+      {
+        displayName: 'Operation',
+        name: 'operation',
+        type: 'options',
+        displayOptions: { show: { resource: ['apod'] } },
+        options: [
+          {
+            name: 'Get',
+            value: 'get',
+            action: 'Get the astronomy picture of the day',
+            // Declarative routing — no execute() needed
+            routing: {
+              request: { method: 'GET', url: '/planetary/apod' },
+            },
+          },
+        ],
+        default: 'get',
+      },
+      {
+        displayName: 'Date',
+        name: 'date',
+        type: 'dateTime',
+        default: '',
+        // Field-level routing: how this value maps to the request
+        routing: {
+          send: { type: 'query', property: 'date' },
+        },
+      },
+    ],
+  };
+  // No execute() method — n8n handles everything from the routing config
+}
+```
+
+For complex logic (GraphQL, multi-step calls, custom transforms), n8n falls back to the **programmatic style** with a manual `execute()` method — similar to Airbyte/Fivetran's imperative approach.
+
+Data flows between n8n nodes as arrays of `INodeExecutionData` items:
+```json
+[
+  {"json": {"id": 1, "name": "Alice"}, "pairedItem": {"item": 0}},
+  {"json": {"id": 2, "name": "Bob"}, "pairedItem": {"item": 1}}
+]
+```
+
 ## Detailed Comparison
 
 ### 1. Connector Authoring
 
-| | Warehouse | Airbyte | Fivetran |
-|---|-----------|---------|----------|
-| **Language** | JSON (no code) | Any (Python, Java, Go, etc.) | Python only |
-| **Skill required** | JSON editing + API knowledge | Full programming + Docker | Python programming |
-| **Packaging** | `.json` file in `~/.warehouse/connectors/` | Docker image | Python module deployed to Fivetran |
-| **Install** | `warehouse connector add <url>` | Docker pull via UI/API | `fivetran deploy` CLI |
-| **LOC for simple connector** | ~40-60 lines of JSON | ~200-500 lines of code + Dockerfile | ~50-100 lines of Python |
+| | Warehouse | Airbyte | Fivetran | n8n |
+|---|-----------|---------|----------|-----|
+| **Language** | JSON (no code) | Any (Python, Java, Go, etc.) | Python only | TypeScript |
+| **Skill required** | JSON editing + API knowledge | Full programming + Docker | Python programming | TypeScript + n8n conventions |
+| **Packaging** | `.json` file in `~/.warehouse/connectors/` | Docker image | Python module deployed to Fivetran | npm package |
+| **Install** | `warehouse connector add <url>` | Docker pull via UI/API | `fivetran deploy` CLI | `npm install` into n8n instance |
+| **LOC for simple connector** | ~40-60 lines of JSON | ~200-500 lines of code + Dockerfile | ~50-100 lines of Python | ~80-150 lines of TypeScript (declarative) |
+| **Declarative option** | Yes (JSON-only) | Partial (Low-Code CDK / YAML) | No | Yes (`routing` config in TypeScript) |
 
-Warehouse's declarative approach means no code to write or debug for standard REST/GraphQL APIs. The tradeoff is that custom extraction logic (complex transforms, multi-step auth flows, non-standard APIs) requires extending the spec format rather than writing arbitrary code.
+Warehouse's declarative approach means no code to write or debug for standard REST/GraphQL APIs. n8n's declarative mode is the closest parallel — it also lets you define endpoints, auth, pagination, and field routing without an `execute()` method. The key difference is that Warehouse uses pure JSON (no programming language needed), while n8n's declarative config is embedded in TypeScript class definitions. Both fall short for complex extraction logic, where imperative code is needed.
 
 ### 2. Schema Declaration
 
@@ -194,6 +271,8 @@ def schema(configuration):
     }]
 ```
 If primary keys are omitted, Fivetran adds a hidden `_fivetran_id` column.
+
+**n8n** — Has **no formal schema declaration**. Data is untyped JSON flowing as `INodeExecutionData` items. Each item has a `json` property containing arbitrary key-value pairs. The node's `properties` array defines UI input fields (with types like `string`, `number`, `options`, `boolean`, `dateTime`), but these describe the node's parameters, not the shape of the output data. Downstream nodes receive whatever JSON the node produces.
 
 ### 3. Data Extraction & Transport
 
@@ -260,6 +339,19 @@ Features: nested dot-path navigation, array wildcards (`[*]`), transforms, alter
 
 **Fivetran** — Connectors parse responses in Python code. There is no declarative mapping layer — developers write standard Python to transform API responses into row dictionaries passed to `op.upsert()`.
 
+**n8n** — Declarative nodes use `postReceive` actions to transform API responses:
+```typescript
+output: {
+  postReceive: [
+    { type: 'rootProperty', properties: { property: 'data.items' } },
+    { type: 'filter', properties: { pass: '={{$responseItem.status === "active"}}' } },
+    { type: 'setKeyValue', properties: { name: '={{$responseItem.name}}', value: '={{$responseItem.id}}' } },
+    { type: 'limit', properties: { maxResults: '={{$parameter.limit}}' } },
+  ],
+}
+```
+This is a pipeline of transforms applied to the response — conceptually similar to Warehouse's `field_mappings` + `results_path` but expressed as an ordered array of typed operations rather than per-field dot-paths. n8n's expressions (`={{...}}`) enable inline JavaScript, giving more flexibility than Warehouse's fixed transform set (`to_string`, `join_array`, etc.).
+
 ### 6. Authentication
 
 **Warehouse** — Auth is declarative in the spec, with multiple strategies:
@@ -273,6 +365,23 @@ Features: nested dot-path navigation, array wildcards (`[*]`), transforms, alter
 **Airbyte** — Auth is configured via the connector's `spec` JSONSchema and handled in connector code. The platform manages OAuth refresh flows for supported connectors.
 
 **Fivetran** — Auth credentials are passed via the `configuration` dict. OAuth and other flows are managed by the Fivetran platform when available. Custom connectors receive secrets as configuration values.
+
+**n8n** — Auth is declared in a separate credential class with an `authenticate` property that specifies injection targets:
+```typescript
+export class MyServiceApi implements ICredentialType {
+  name = 'myServiceApi';
+  properties = [
+    { displayName: 'API Key', name: 'apiKey', type: 'string', typeOptions: { password: true } },
+  ];
+  authenticate: IAuthenticate = {
+    type: 'generic',
+    properties: {
+      headers: { 'X-API-Key': '={{$credentials.apiKey}}' },
+    },
+  };
+}
+```
+Supports API key (header/query), HTTP Basic, Bearer token, OAuth1, and OAuth2 flows. Credentials are encrypted at rest and injected automatically into declarative routing requests — the node spec just references the credential by name. This is similar in spirit to Warehouse's auth spec but requires TypeScript instead of JSON.
 
 ### 7. Full-Text Search
 
@@ -303,6 +412,26 @@ This integrates with the `[permissions]` section of `config.toml` to enable fiel
 
 Airbyte and Fivetran handle access control at the platform/warehouse level, not within the connector protocol.
 
+## Warehouse vs n8n: Declarative Approaches Compared
+
+Warehouse and n8n are the most similar in philosophy — both offer declarative connector definitions for REST APIs. Here's how they differ:
+
+| Aspect | Warehouse JSON Spec | n8n Declarative Node |
+|--------|---------------------|----------------------|
+| **Format** | Pure JSON file | TypeScript class with `routing` config |
+| **No programming language required** | Yes | No (TypeScript) |
+| **Endpoint definition** | `endpoint.url` + `endpoint.method` | `routing.request.url` + `routing.request.method` |
+| **Field → request mapping** | `response.field_mappings` (response → DB) | `routing.send` (UI field → request) |
+| **Response → output mapping** | `results_path` + `field_mappings` with dot-paths | `postReceive` pipeline (rootProperty, filter, setKeyValue) |
+| **Pagination** | `pagination.type` (page_number, offset, cursor) | `requestOperations.pagination` (offset, custom) |
+| **Auth** | `auth` block in same JSON file | Separate credential TypeScript class |
+| **Data destination** | SQLite (with FTS5 indexing) | Next node in workflow (in-memory) |
+| **Scope** | Data extraction + storage + search | Workflow step (one action in a chain) |
+| **Dynamic options** | `discover` pipeline | `loadOptions.routing` |
+| **Transforms** | Fixed set: `to_string`, `to_int`, `join_array` | Inline JavaScript expressions: `={{...}}` |
+
+The fundamental difference: Warehouse specs describe a **complete data pipeline** (auth → fetch → paginate → map → store → index), while n8n nodes describe a **single workflow step** (one API call that passes data to the next node). Warehouse handles state/sync/search internally; n8n delegates those concerns to the workflow.
+
 ## Summary: When Each Approach Fits
 
 | Scenario | Best fit |
@@ -310,18 +439,19 @@ Airbyte and Fivetran handle access control at the platform/warehouse level, not 
 | **Personal data consolidation with local search** | Warehouse — declarative specs, FTS5, governance, all-local |
 | **Standard REST/GraphQL API to warehouse** | Warehouse (if simple), Airbyte (if complex transforms needed) |
 | **Enterprise data pipeline with monitoring** | Airbyte or Fivetran — mature orchestration, alerting, observability |
+| **Visual workflow automation** | n8n — drag-and-drop node chaining with 400+ integrations |
 | **Non-HTTP sources** (databases, files, queues) | Airbyte or Fivetran — imperative code can use any client library |
-| **Complex multi-step extraction logic** | Airbyte or Fivetran — arbitrary code vs. declarative limits |
+| **Complex multi-step extraction logic** | Airbyte, Fivetran, or n8n (programmatic mode) |
 | **No-code connector creation** | Warehouse — JSON-only, no programming required |
 | **Managed infrastructure** | Fivetran — fully managed SaaS |
-| **Self-hosted / open source** | Airbyte — open-source platform, or Warehouse for local use |
+| **Self-hosted / open source** | Airbyte, n8n, or Warehouse for local use |
 
 ### Key Tradeoffs
 
 **Warehouse's declarative approach:**
 - (+) No code to write, test, or maintain for standard APIs
 - (+) Integrated search and governance — not just data movement
-- (+) Single binary, no Docker/Python dependencies
+- (+) Single binary, no Docker/Python/Node.js dependencies
 - (-) Limited to patterns the spec format supports (REST, GraphQL, specific pagination/auth types)
 - (-) Custom transforms require extending the Rust runtime
 
@@ -338,3 +468,12 @@ Airbyte and Fivetran handle access control at the platform/warehouse level, not 
 - (+) Atomic checkpointing with at-least-once delivery
 - (-) Python only, vendor lock-in to Fivetran platform
 - (-) No self-hosting option
+
+**n8n's hybrid approach:**
+- (+) Declarative mode for simple REST APIs, programmatic fallback for complex logic
+- (+) Visual workflow builder — chain nodes into multi-step pipelines
+- (+) Large ecosystem (400+ built-in nodes) + self-hostable
+- (+) Inline JavaScript expressions for flexible transforms
+- (-) TypeScript required (not pure JSON like Warehouse)
+- (-) No built-in schema enforcement or data persistence
+- (-) Nodes are workflow steps, not standalone data pipelines — sync/state/storage are external concerns
