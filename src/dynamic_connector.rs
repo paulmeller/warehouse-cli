@@ -819,6 +819,32 @@ fn resolve_discover_template(template: &str, context: &HashMap<String, DiscoverV
     result
 }
 
+/// Recursively resolve `{{...}}` templates in a JSON value (strings, objects, arrays).
+fn resolve_json_templates(
+    value: &mut serde_json::Value,
+    context: &HashMap<String, DiscoverValue>,
+) {
+    match value {
+        serde_json::Value::String(s) => {
+            let resolved = resolve_discover_template(s, context);
+            if resolved != *s {
+                *s = resolved;
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for v in map.values_mut() {
+                resolve_json_templates(v, context);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                resolve_json_templates(v, context);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Resolve date template variables.
 fn resolve_date_template(key: &str) -> String {
     let today = chrono::Local::now().date_naive();
@@ -1486,17 +1512,8 @@ impl DynamicConnector {
             } else {
                 serde_json::json!({})
             };
-            // Resolve templates in variable values
-            if let Some(obj) = variables.as_object_mut() {
-                for (_k, v) in obj.iter_mut() {
-                    if let Some(s) = v.as_str() {
-                        let resolved = resolve_discover_template(s, discover_context);
-                        if resolved != s {
-                            *v = serde_json::Value::String(resolved);
-                        }
-                    }
-                }
-            }
+            // Resolve templates in variable values (recursively for nested objects)
+            resolve_json_templates(&mut variables, discover_context);
 
             if let Some(ref pagination) = table.endpoint.pagination {
                 match pagination.pagination_type.as_str() {
