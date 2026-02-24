@@ -1,6 +1,6 @@
 [package]
 name = "warehouse-cli"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "Fast CLI for personal data warehouse - extraction, FTS5 search, and browsing"
 license = "MIT"
